@@ -1,0 +1,297 @@
+---
+- name: Reset Kubernetes cluster on all nodes (aligned with kubeadm docs)
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Display WARNING message
+      ansible.builtin.debug:
+        msg:
+          - "======================================================"
+          - "  Kubernetes Node FULL RESET (Aligned with kubeadm docs)"
+          - "======================================================"
+          - ""
+          - "➡ This playbook will gracefully stop kube-apiserver,"
+          - "   run kubeadm reset, and clean CNI safely."
+          - ""
+          - "➡ It will NOT flush iptables globally, per Kubernetes docs."
+          - "➡ It will NOT remove ~/.kube unless remove_kubeconfig=true."
+          - ""
+          - "======================================================"
+          - "Set 'perform_reset: true' in vars to proceed"
+      run_once: true
+
+    - name: Fail if perform_reset is not true
+      ansible.builtin.fail:
+        msg: "Safety check failed. Set 'perform_reset: true' in the playbook vars to proceed with cluster reset."
+      when: not perform_reset
+      run_once: true
+
+    # =============================================================================
+    # 1) GRACEFUL SHUTDOWN OF STATIC PODS (per kubeadm documentation)
+    # =============================================================================
+    - name: Check for static pod manifests (control plane nodes)
+      ansible.builtin.find:
+        paths: /etc/kubernetes/manifests
+        patterns: "*.yaml,*.yml"
+        file_type: file
+      register: static_pod_manifests
+      failed_when: false
+
+    - name: Check if yq is available for graceful shutdown
+      ansible.builtin.command:
+        cmd: which yq
+      register: yq_check
+      when: static_pod_manifests.files | length > 0
+      changed_when: false
+      failed_when: false
+
+    - name: Gracefully stop static pods using yq (remove command array)
+      ansible.builtin.shell: |
+        for manifest in /etc/kubernetes/manifests/*.yaml /etc/kubernetes/manifests/*.yml; do
+          [ -f "$manifest" ] && yq eval -i '.spec.containers[0].command = []' "$manifest" || true
+        done
+      when: static_pod_manifests.files | length > 0 and yq_check.rc == 0
+      failed_when: false
+
+    - name: Gracefully stop static pods by moving manifests (fallback)
+      ansible.builtin.shell: |
+        # Move manifests temporarily to stop pods gracefully
+        for manifest in /etc/kubernetes/manifests/*.yaml /etc/kubernetes/manifests/*.yml; do
+          [ -f "$manifest" ] && mv "$manifest" "/tmp/$(basename $manifest).backup" || true
+        done
+      when: static_pod_manifests.files | length > 0 and (yq_check.rc != 0 or yq_check is not defined)
+      failed_when: false
+
+    - name: Wait for static pods to exit (up to 60 seconds)
+      ansible.builtin.shell: |
+        timeout 60 sh -c 'while pgrep -f "kube-apiserver|etcd|kube-controller-manager|kube-scheduler" >/dev/null; do sleep 1; done' || true
+      when: static_pod_manifests.files | length > 0
+      failed_when: false
+      register: static_pods_wait
+
+    - name: Display static pods status
+      ansible.builtin.debug:
+        msg: "{{ 'Static pods gracefully stopped' if static_pod_manifests.files | length > 0 else 'No static pod manifests found (likely worker node)' }}"
+
+    # =============================================================================
+    # 2) STOP kubelet + containerd
+    # =============================================================================
+    - name: Stop kubelet service
+      ansible.builtin.systemd:
+        name: kubelet
+        state: stopped
+        enabled: no
+      failed_when: false
+
+    - name: Stop containerd service
+      ansible.builtin.systemd:
+        name: containerd
+        state: stopped
+      failed_when: false
+
+    # =============================================================================
+    # 3) KUBEADM RESET (core action, per official docs)
+    # =============================================================================
+    - name: Check if kubeadm is installed
+      ansible.builtin.command:
+        cmd: which kubeadm
+      register: kubeadm_check
+      changed_when: false
+      failed_when: false
+
+    - name: Run kubeadm reset
+      ansible.builtin.command:
+        cmd: kubeadm reset -f
+      when: kubeadm_check.rc == 0
+      failed_when: false
+
+    - name: Display kubeadm reset status
+      ansible.builtin.debug:
+        msg: "{{ 'kubeadm reset completed' if kubeadm_check.rc == 0 else 'kubeadm not found, skipping reset' }}"
+   # =============================================================================
+    # 4) CNI CLEANUP (per docs + safe extensions)
+    # =============================================================================
+    - name: Remove CNI configuration directory
+      ansible.builtin.file:
+        path: /etc/cni/net.d
+        state: absent
+      failed_when: false
+
+    - name: Remove CNI binaries directory
+      ansible.builtin.file:
+        path: /opt/cni/bin
+        state: absent
+      failed_when: false
+
+    - name: Clean CNI runtime artifacts (Calico / Cilium / Flannel)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /var/lib/calico
+        - /var/lib/cni
+        - /var/run/calico
+        - /var/run/cilium
+        - /var/lib/cilium
+        - /sys/fs/bpf/tc
+      failed_when: false
+
+    - name: Clean Cilium BPF artifacts
+      ansible.builtin.shell: |
+        rm -rf /sys/fs/bpf/cilium* 2>/dev/null || true
+      failed_when: false
+
+    - name: Delete network interfaces left by CNIs
+      ansible.builtin.command:
+        cmd: "ip link delete {{ item }}"
+      loop:
+        - cni0
+        - flannel.1
+        - tunl0
+        - vxlan.calico
+      failed_when: false
+      ignore_errors: true
+
+    # =============================================================================
+    # 5) REMOVE kubelet & Kubernetes state (kubeadm doesn't remove all)
+    # =============================================================================
+    - name: Remove kubelet state directory
+      ansible.builtin.file:
+        path: /var/lib/kubelet
+        state: absent
+      failed_when: false
+
+    - name: Remove kubelet service drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/kubelet.service.d
+        state: absent
+      failed_when: false
+
+    - name: Remove Kubernetes configuration directory
+      ansible.builtin.file:
+        path: /etc/kubernetes
+        state: absent
+      failed_when: false
+
+    - name: Remove etcd data directory
+      ansible.builtin.file:
+        path: /var/lib/etcd
+        state: absent
+      failed_when: false
+
+    # =============================================================================
+    # 6) CONTAINERD RUNTIME CLEANUP (SAFE)
+    # =============================================================================
+    - name: Clean containerd overlays (safe)
+      ansible.builtin.file:
+        path: /var/lib/containerd/io.containerd.snapshotter.v1.overlayfs
+        state: absent
+      failed_when: false
+
+    - name: Reload systemd daemon
+      ansible.builtin.systemd:
+        daemon_reload: yes
+
+    - name: Reset failed systemd units
+      ansible.builtin.command:
+        cmd: systemctl reset-failed
+      failed_when: false
+
+    - name: Enable containerd service
+      ansible.builtin.systemd:
+        name: containerd
+        enabled: yes
+      failed_when: false
+
+    - name: Start containerd service
+      ansible.builtin.systemd:
+        name: containerd
+        state: started
+      failed_when: false
+
+    # =============================================================================
+    # 7.5) OPTIONAL: Clean containerd/crictl images and containers (optional)
+    # =============================================================================
+    - name: Check if crictl is available
+      ansible.builtin.command:
+        cmd: which crictl
+      register: crictl_check
+      changed_when: false
+      failed_when: false
+
+    - name: Remove all containers (optional - commented out by default)
+      ansible.builtin.shell: |
+        crictl rm -a || true
+      when: crictl_check.rc == 0
+      failed_when: false
+     # Uncomment the line below to enable container cleanup
+      # tags: [cleanup_containers]
+
+    - name: Remove all images (optional - commented out by default)
+      ansible.builtin.shell: |
+        crictl rmi -a || true
+      when: crictl_check.rc == 0
+      failed_when: false
+      # Uncomment the line below to enable image cleanup
+      # tags: [cleanup_images]
+
+    # =============================================================================
+    # 7) OPTIONAL: Remove ~/.kube config (per user request)
+    # =============================================================================
+    - name: Remove user kubeconfig directory
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /root/.kube
+        - /home/{{ ansible_user }}/.kube
+      when: remove_kubeconfig
+      failed_when: false
+
+    # =============================================================================
+    # 8) VERIFICATION AND SUMMARY
+    # =============================================================================
+    - name: Check kubelet service status
+      ansible.builtin.systemd:
+        name: kubelet
+      register: kubelet_status
+      failed_when: false
+      changed_when: false
+
+    - name: Check containerd service status
+      ansible.builtin.systemd:
+        name: containerd
+      register: containerd_status
+      failed_when: false
+      changed_when: false
+
+    - name: Display reset summary
+      ansible.builtin.debug:
+        msg:
+          - "======================================================"
+          - "✔ DONE — Node {{ inventory_hostname }} is fully reset"
+          - ""
+          - "Kubelet status: {{ 'stopped (disabled)' if kubelet_status.status.ActiveState == 'inactive' else kubelet_status.status.ActiveState }}"
+          - "Containerd status: {{ containerd_status.status.ActiveState }}"
+          - ""
+          - "ℹ️ kubelet intentionally left DISABLED —"
+          - "   it will be enabled automatically when you join/init the node."
+          - ""
+          - "======================================================"
+          - "📌  Manual cleanup recommended by Kubernetes docs:"
+          - ""
+          - "1) kube-proxy leftover iptables rules (optional):"
+          - "   docker run --privileged --rm registry.k8s.io/kube-proxy:v1.34.0 \\"
+          - "     kube-proxy --cleanup"
+          - ""
+          - "2) Remove ~/.kube (optional):"
+          - "   rm -rf $HOME/.kube"
+          - ""
+          - "======================================================"
+          - "This node is ready for:"
+          - "  ➤ kubeadm init"
+          - "  or"
+          - "  ➤ kubeadm join"
+          - "======================================================"

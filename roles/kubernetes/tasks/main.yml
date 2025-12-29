@@ -1,0 +1,174 @@
+# Pre-flight checks for Kubernetes installation
+- name: Verify swap is disabled (CIS requirement)
+  command: swapon --show
+  register: swap_status
+  changed_when: false
+  failed_when: false
+
+- name: Fail if swap is enabled
+  assert:
+    that:
+      - swap_status.stdout == ""
+    fail_msg: "FAIL: Swap is enabled. Kubernetes requires swap to be disabled (CIS requirement)."
+    success_msg: "PASS: Swap is disabled"
+
+- name: Verify required kernel modules are loaded
+  command: lsmod | grep -E "^(overlay|br_netfilter)"
+  register: kernel_modules
+  changed_when: false
+  failed_when: false
+
+- name: Warn if kernel modules not loaded
+  debug:
+    msg: "WARNING: Required kernel modules (overlay, br_netfilter) may not be loaded. Ensure kernal role runs before kubernetes role."
+
+- name: Add Kubernetes repo
+  apt_repository:
+    repo: "deb https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/deb/ /"
+    state: present
+
+- name: Install Kubernetes components
+  apt:
+    name:
+      - kubelet
+      - kubeadm
+      - kubectl
+    state: present
+
+- name: Hold Kubernetes packages
+  command: apt-mark hold kubelet kubeadm kubectl
+  changed_when: false
+
+- name: Ensure kubelet config directory exists
+  file:
+    path: /var/lib/kubelet
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Configure kubelet
+  template:
+    src: kubelet-config.yaml.j2
+    dest: /var/lib/kubelet/config.yaml
+    owner: root
+    group: root
+    mode: '0600'
+  notify: restart kubelet
+
+# CIS 4.1.9 & 4.1.10 - Ensure kubelet config.yaml permissions and ownership
+# Note: Permissions and ownership are already set in the template task above
+# This task ensures they remain correct even if file is modified elsewhere
+- name: Verify kubelet config.yaml permissions and ownership (CIS 4.1.9, 4.1.10)
+  file:
+    path: /var/lib/kubelet/config.yaml
+    mode: '0600'
+    owner: root
+    group: root
+
+# CIS 4.1.1 & 4.1.2 - Ensure kubelet service file permissions and ownership
+- name: Check if kubelet service files exist
+  stat:
+    path: "{{ item }}"
+  register: kubelet_service_files
+  loop:
+    - /etc/systemd/system/kubelet.service
+    - /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
+  ignore_errors: true
+
+- name: Set kubelet service file permissions and ownership (CIS 4.1.1, 4.1.2)
+  file:
+    path: "{{ item.item }}"
+    mode: '0600'
+    owner: root
+    group: root
+  loop: "{{ kubelet_service_files.results }}"
+  when: item.stat.exists
+
+# CIS 4.1.5 & 4.1.6 - Ensure kubelet.conf file permissions and ownership
+- name: Check if kubelet.conf exists
+  stat:
+    path: /etc/kubernetes/kubelet.conf
+  register: kubelet_conf_stat
+  ignore_errors: true
+
+- name: Set kubelet.conf file permissions and ownership (CIS 4.1.5, 4.1.6)
+  file:
+    path: /etc/kubernetes/kubelet.conf
+    mode: '0600'
+    owner: root
+    group: root
+  when: kubelet_conf_stat.stat.exists
+
+# CIS 4.1.7 & 4.1.8 - Ensure certificate authorities file permissions and ownership
+- name: Check if client CA file exists
+  stat:
+    path: "{{ kubelet_client_ca_file | default('/etc/kubernetes/pki/ca.crt') }}"
+  register: client_ca_file_stat
+  ignore_errors: true
+
+- name: Set certificate authorities file permissions and ownership (CIS 4.1.7, 4.1.8)
+  file:
+    path: "{{ kubelet_client_ca_file | default('/etc/kubernetes/pki/ca.crt') }}"
+    mode: '0600'
+    owner: root
+    group: root
+  when: client_ca_file_stat.stat.exists
+
+# CIS 4.2.7 - Ensure hostname-override is not set
+- name: Check kubelet service files for hostname-override
+  shell: |
+    grep -r "hostname-override" /etc/systemd/system/kubelet.service* 2>/dev/null || true
+  register: hostname_override_check
+  changed_when: false
+  failed_when: false
+
+- name: Verify hostname-override is not set (CIS 4.2.7)
+  assert:
+    that:
+      - hostname_override_check.stdout == ""
+    fail_msg: "FAIL: hostname-override argument found in kubelet service files (CIS 4.2.7)"
+    success_msg: "PASS: hostname-override not set (CIS 4.2.7)"
+
+# CIS 4.1.3 & 4.1.4 - Proxy kubeconfig file permissions and ownership (if exists)
+- name: Find proxy kubeconfig files
+  find:
+    paths:
+      - /etc/kubernetes
+      - /var/lib/kube-proxy
+    patterns:
+      - "kube-proxy*.conf"
+      - "proxy*.conf"
+    file_type: file
+  register: proxy_kubeconfig_files
+  ignore_errors: true
+
+- name: Set proxy kubeconfig file permissions and ownership (CIS 4.1.3, 4.1.4)
+  file:
+    path: "{{ item.path }}"
+    mode: '0600'
+    owner: root
+    group: root
+  loop: "{{ proxy_kubeconfig_files.files | default([]) }}"
+  when: proxy_kubeconfig_files.files is defined and proxy_kubeconfig_files.files | length > 0
+
+# CNI Configuration file security (CIS 4.1.9, 4.1.10 equivalent for CNI)
+- name: Find CNI configuration files
+  find:
+    paths:
+      - /etc/cni/net.d
+    patterns:
+      - "*.conf"
+      - "*.conflist"
+    file_type: file
+  register: cni_config_files
+  ignore_errors: true
+
+- name: Set CNI configuration file permissions and ownership
+  file:
+    path: "{{ item.path }}"
+    mode: '0600'
+    owner: root
+    group: root
+  loop: "{{ cni_config_files.files | default([]) }}"
+  when: cni_config_files.files is defined and cni_config_files.files | length > 0

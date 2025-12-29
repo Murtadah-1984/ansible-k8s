@@ -1,0 +1,17 @@
+---
+# Default variables for CIS Ubuntu 24.04 LTS STIG Hardening
+
+# GRUB bootloader password hash
+# Generate with: grub-mkpasswd-pbkdf2
+# Leave as 'CHANGE_ME' to skip GRUB password configuration
+grub_password_hash: 'CHANGE_ME'
+
+# Disable swap (required for Kubernetes)
+disable_swap: true
+
+# Kubernetes ports to allow through UFW
+kubernetes_ports:
+  - "10250"
+  - "10256"
+  - "30000:32767"
+

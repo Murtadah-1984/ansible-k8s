@@ -1,0 +1,323 @@
+---
+# CIS Ubuntu 24.04 LTS STIG Hardening
+# Implements automated recommendations from CIS Ubuntu Linux 24.04 LTS STIG Benchmark v1.0.0
+
+- name: Remove prohibited packages (UBTU-24-100030, UBTU-24-100040)
+  apt:
+    name:
+      - telnetd
+      - rsh-server
+    state: absent
+    purge: yes
+
+- name: Remove systemd-timesyncd (UBTU-24-100010)
+  apt:
+    name: systemd-timesyncd
+    state: absent
+    purge: yes
+
+- name: Remove ntp package (UBTU-24-100020)
+  apt:
+    name: ntp
+    state: absent
+    purge: yes
+
+- name: Install required security packages
+  apt:
+    name:
+      - ufw
+      - fail2ban
+      - unattended-upgrades
+      - auditd
+      - audispd-plugins
+      - libpam-pwquality
+      - aide
+      - aide-common
+      - apparmor
+      - apparmor-utils
+      - chrony
+      - openssh-server
+      - openssh-client
+      - rsyslog
+      - sssd
+      - libpam-sss
+      - libnss-sss
+      - opensc-pkcs11
+      - libpam-pkcs11
+      - vlock
+    state: present
+    update_cache: true
+
+- name: Enable and start rsyslog service (UBTU-24-100200)
+  systemd:
+    name: rsyslog
+    enabled: true
+    state: started
+
+- name: Enable and start auditd service (UBTU-24-100410)
+  systemd:
+    name: auditd
+    enabled: true
+    state: started
+
+- name: Enable and start apparmor service (UBTU-24-100510)
+  systemd:
+    name: apparmor
+    enabled: true
+    state: started
+
+- name: Enable and start chrony service (UBTU-24-100700)
+  systemd:
+    name: chronyd
+    enabled: true
+    state: started
+
+- name: Enable and start SSH service (UBTU-24-100810)
+  systemd:
+    name: ssh
+    enabled: true
+    state: started
+
+- name: Enable and start sssd service (UBTU-24-100660)
+  systemd:
+    name: sssd
+    enabled: true
+    state: started
+
+- name: Enable UFW firewall (UBTU-24-100310, UBTU-24-100310)
+  ufw:
+    state: enabled
+    policy: deny
+
+- name: Allow SSH through UFW
+  ufw:
+    rule: allow
+    port: "22"
+    proto: tcp
+
+- name: Allow Kubernetes ports through UFW
+  ufw:
+    rule: allow
+    port: "{{ item }}"
+  loop: "{{ kubernetes_ports | default(['10250', '10256', '30000:32767']) }}"
+
+- name: Configure AIDE to protect audit tools (UBTU-24-90890)
+  blockinfile:
+    path: /etc/aide/aide.conf
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - Audit Tools"
+    block: |
+      # Audit Tools
+      /sbin/auditctl p+i+n+u+g+s+b+acl+xattrs+sha512
+      /sbin/auditd p+i+n+u+g+s+b+acl+xattrs+sha512
+      /sbin/ausearch p+i+n+u+g+s+b+acl+xattrs+sha512
+      /sbin/aureport p+i+n+u+g+s+b+acl+xattrs+sha512
+      /sbin/autrace p+i+n+u+g+s+b+acl+xattrs+sha512
+      /sbin/augenrules p+i+n+u+g+s+b+acl+xattrs+sha512
+
+- name: Configure AIDE to notify on changes (UBTU-24-100130)
+  lineinfile:
+    path: /etc/default/aide
+    regexp: '^SILENTREPORTS='
+    line: 'SILENTREPORTS=no'
+    create: true
+
+- name: Initialize AIDE database if not exists (UBTU-24-100110)
+  command: aideinit
+  args:
+    creates: /var/lib/aide/aide.db
+  changed_when: false
+  failed_when: false
+
+- name: Check if AIDE database exists
+  stat:
+    path: /var/lib/aide/aide.db
+  register: aide_db_exists
+
+- name: Check if new AIDE database exists
+  stat:
+    path: /var/lib/aide/aide.db.new
+  register: aide_db_new_exists
+
+- name: Copy AIDE database if new one exists (UBTU-24-100110)
+  command: cp -p /var/lib/aide/aide.db.new /var/lib/aide/aide.db
+  when: 
+    - not aide_db_exists.stat.exists
+    - aide_db_new_exists.stat.exists
+  changed_when: true
+
+- name: Configure SSH daemon with FIPS-approved settings
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    backup: true
+  loop:
+    - { regexp: '^#?PermitRootLogin', line: 'PermitRootLogin no' }
+    - { regexp: '^#?PasswordAuthentication', line: 'PasswordAuthentication no' }
+    - { regexp: '^#?X11Forwarding', line: 'X11Forwarding no' }
+    - { regexp: '^#?PermitEmptyPasswords', line: 'PermitEmptyPasswords no' }
+    - { regexp: '^#?AllowTcpForwarding', line: 'AllowTcpForwarding no' }
+    - { regexp: '^#?ClientAliveInterval', line: 'ClientAliveInterval 300' }
+    - { regexp: '^#?ClientAliveCountMax', line: 'ClientAliveCountMax 2' }
+    - { regexp: '^#?Ciphers', line: 'Ciphers aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes128-ctr' }
+    - { regexp: '^#?MACs', line: 'MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256' }
+    - { regexp: '^#?KexAlgorithms', line: 'KexAlgorithms ecdh-sha2-nistp521,ecdh-sha2-nistp384,ecdh-sha2-nistp256,diffie-hellman-group-exchange-sha256,diffie-hellman-group16-sha512,diffie-hellman-group14-sha256' }
+  notify: Restart SSH
+
+- name: Configure SSH client with FIPS-approved settings (UBTU-24-100850, UBTU-24-100860)
+  lineinfile:
+    path: /etc/ssh/ssh_config
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    backup: true
+  loop:
+    - { regexp: '^#?Ciphers', line: 'Ciphers aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes128-ctr' }
+    - { regexp: '^#?MACs', line: 'MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256' }
+
+- name: Configure system limits - maxlogins (UBTU-24-200000)
+  lineinfile:
+    path: /etc/security/limits.conf
+    regexp: '^\*\s+hard\s+maxlogins'
+    line: '* hard maxlogins 10'
+    create: true
+
+- name: Configure session timeout (UBTU-24-200060)
+  copy:
+    dest: /etc/profile.d/99-terminal_tmout.sh
+    content: |
+      # CIS STIG UBTU-24-200060: Configure session timeout
+      TMOUT=600
+      export TMOUT
+    mode: '0644'
+
+- name: Configure GRUB boot password requirement (UBTU-24-102000)
+  blockinfile:
+    path: /etc/grub.d/40_custom
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - GRUB Password"
+    block: |
+      set superusers="root"
+      password_pbkdf2 root {{ grub_password_hash | default('CHANGE_ME') }}
+    create: true
+  when: grub_password_hash is defined and grub_password_hash != 'CHANGE_ME'
+
+- name: Configure GRUB to enable audit at startup (UBTU-24-102010)
+  lineinfile:
+    path: /etc/default/grub
+    regexp: '^GRUB_CMDLINE_LINUX='
+    line: 'GRUB_CMDLINE_LINUX="audit=1"'
+    backup: true
+
+- name: Update GRUB configuration
+  command: update-grub
+  when: grub_password_hash is defined or true
+  changed_when: true
+
+- name: Set correct file permissions (UBTU-24-400000 series)
+  file:
+    path: "{{ item.path }}"
+    mode: "{{ item.mode }}"
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ item.group | default('root') }}"
+  loop:
+    - { path: /etc/passwd, mode: '0644', owner: root, group: root }
+    - { path: /etc/shadow, mode: '0640', owner: root, group: shadow }
+    - { path: /etc/group, mode: '0644', owner: root, group: root }
+    - { path: /etc/gshadow, mode: '0640', owner: root, group: shadow }
+    - { path: /etc/ssh/sshd_config, mode: '0600', owner: root, group: root }
+
+- name: Disable unnecessary services
+  systemd:
+    name: "{{ item }}"
+    enabled: false
+    state: stopped
+  loop:
+    - snapd
+    - bluetooth
+    - avahi-daemon
+  ignore_errors: true
+
+- name: Configure password quality (UBTU-24-100600)
+  lineinfile:
+    path: /etc/security/pwquality.conf
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    create: true
+  loop:
+    - { regexp: '^#?minlen', line: 'minlen = 14' }
+    - { regexp: '^#?dcredit', line: 'dcredit = -1' }
+    - { regexp: '^#?ucredit', line: 'ucredit = -1' }
+    - { regexp: '^#?ocredit', line: 'ocredit = -1' }
+    - { regexp: '^#?lcredit', line: 'lcredit = -1' }
+
+- name: Configure PAM password quality
+  lineinfile:
+    path: /etc/pam.d/common-password
+    regexp: '^password\s+requisite\s+pam_pwquality\.so'
+    line: 'password requisite pam_pwquality.so retry=3'
+    insertafter: '^password.*pam_unix\.so'
+    create: true
+
+- name: Configure sysctl network security settings
+  sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    state: present
+    sysctl_set: true
+    reload: true
+  loop:
+    - { key: 'net.ipv4.conf.all.rp_filter', value: '1' }
+    - { key: 'net.ipv4.conf.default.rp_filter', value: '1' }
+    - { key: 'net.ipv4.conf.all.accept_redirects', value: '0' }
+    - { key: 'net.ipv4.conf.default.accept_redirects', value: '0' }
+    - { key: 'net.ipv4.conf.all.secure_redirects', value: '0' }
+    - { key: 'net.ipv4.conf.default.secure_redirects', value: '0' }
+    - { key: 'net.ipv6.conf.all.accept_redirects', value: '0' }
+    - { key: 'net.ipv6.conf.default.accept_redirects', value: '0' }
+    - { key: 'net.ipv4.conf.all.send_redirects', value: '0' }
+    - { key: 'net.ipv4.conf.default.send_redirects', value: '0' }
+    - { key: 'net.ipv4.conf.all.log_martians', value: '1' }
+    - { key: 'net.ipv4.conf.default.log_martians', value: '1' }
+    - { key: 'net.ipv4.icmp_echo_ignore_broadcasts', value: '1' }
+    - { key: 'net.ipv4.tcp_syncookies', value: '1' }
+    - { key: 'net.ipv4.conf.all.accept_source_route', value: '0' }
+    - { key: 'net.ipv4.conf.default.accept_source_route', value: '0' }
+    - { key: 'net.ipv6.conf.all.accept_source_route', value: '0' }
+    - { key: 'net.ipv6.conf.default.accept_source_route', value: '0' }
+
+- name: Make sysctl settings persistent
+  copy:
+    dest: /etc/sysctl.d/99-cis-hardening.conf
+    content: |
+      # CIS Ubuntu 24.04 LTS STIG Network Security Settings
+      net.ipv4.conf.all.rp_filter = 1
+      net.ipv4.conf.default.rp_filter = 1
+      net.ipv4.conf.all.accept_redirects = 0
+      net.ipv4.conf.default.accept_redirects = 0
+      net.ipv4.conf.all.secure_redirects = 0
+      net.ipv4.conf.default.secure_redirects = 0
+      net.ipv6.conf.all.accept_redirects = 0
+      net.ipv6.conf.default.accept_redirects = 0
+      net.ipv4.conf.all.send_redirects = 0
+      net.ipv4.conf.default.send_redirects = 0
+      net.ipv4.conf.all.log_martians = 1
+      net.ipv4.conf.default.log_martians = 1
+      net.ipv4.icmp_echo_ignore_broadcasts = 1
+      net.ipv4.tcp_syncookies = 1
+      net.ipv4.conf.all.accept_source_route = 0
+      net.ipv4.conf.default.accept_source_route = 0
+      net.ipv6.conf.all.accept_source_route = 0
+      net.ipv6.conf.default.accept_source_route = 0
+    mode: '0644'
+
+- name: Disable swap (if not needed for Kubernetes)
+  command: swapoff -a
+  when: disable_swap | default(true)
+  changed_when: true
+  failed_when: false
+
+- name: Comment out swap entries in /etc/fstab
+  replace:
+    path: /etc/fstab
+    regexp: '^([^#].*?\sswap\s)'
+    replace: '#\1'
+  when: disable_swap | default(true)

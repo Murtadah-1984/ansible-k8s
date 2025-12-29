@@ -1,0 +1,8 @@
+- name: Autoremove packages
+  apt:
+    autoremove: yes
+    autoclean: yes
+
+- name: Vacuum journal
+  command: journalctl --vacuum-time=7d
+  changed_when: false

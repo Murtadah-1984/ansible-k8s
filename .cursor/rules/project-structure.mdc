@@ -1,0 +1,168 @@
+---
+description: Project directory structure and important files for the Ansible Kubernetes deployment project
+globs:
+alwaysApply: false
+---
+# Project Structure and Directory Layout
+
+This document outlines the directory structure and important files in the Ansible Kubernetes deployment project.
+
+## Root Directory Structure
+
+```
+ansible-k8s/
+├── .cursor/
+│   └── rules/                    # Cursor IDE rules and guidelines
+│       ├── cursor-rules.mdc       # How to add/edit Cursor rules
+│       ├── self-improvement.mdc   # Self-improvement guidelines
+│       └── project-structure.mdc # This file
+├── group_vars/                   # Group variables for all hosts
+│   └── all.yml                   # Global variables (k8s version, containerd, etc.)
+├── roles/                        # Ansible roles directory
+│   ├── audit/                    # Audit role
+│   ├── cleanup/                  # Cleanup role
+│   ├── common/                   # Common system configuration
+│   ├── containerd/              # Container runtime installation
+│   ├── hardening/                # Security hardening (CIS/STIG compliance)
+│   ├── images/                   # Container image management
+│   ├── kernal/                   # Kernel configuration (note: typo in name)
+│   └── kubernetes/               # Kubernetes installation and configuration
+├── inventory.ini                 # Ansible inventory file
+├── playbook.yml                  # Main Ansible playbook
+├── CIS Kubernetes Benchmark v1.8.0-ARCHIVE.md  # CIS K8s benchmark reference
+├── CIS_Ubuntu_Linux_24.04_LTS_STIG_Benchmark_v1.0.0.md  # Ubuntu STIG reference
+└── CIS_UBUNTU_24.04_STIG_IMPLEMENTATION.md    # STIG implementation guide
+```
+
+## Important Files
+
+### Configuration Files
+
+- **`playbook.yml`**: Main Ansible playbook that orchestrates all roles
+  - Executes roles in order: common → hardening → kernel → containerd → kubernetes → images → monitoring → cleanup → audit
+  - Targets `k8s_nodes` host group
+  - Uses `become: true` for privilege escalation
+
+- **`inventory.ini`**: Ansible inventory defining host groups
+  - Groups: `[lb]`, `[control]`, `[kong]`, `[workers]`
+  - Contains host definitions with IP addresses
+  - Sets global vars: `ansible_user`, `ansible_ssh_private_key_file`
+
+- **`group_vars/all.yml`**: Global variables for all hosts
+  - Kubernetes version: `1.34`
+  - Container runtime versions (containerd, CNI, crictl)
+  - Node configuration (hostname, timezone)
+  - Monitoring configuration (Loki host/port)
+
+### Documentation Files
+
+- **`CIS Kubernetes Benchmark v1.8.0-ARCHIVE.md`**: CIS Kubernetes security benchmark reference
+  - Used for kubelet and control plane security configurations
+  - Contains automated and manual recommendations
+
+- **`CIS_Ubuntu_Linux_24.04_LTS_STIG_Benchmark_v1.0.0.md`**: Ubuntu 24.04 STIG benchmark
+  - Security Technical Implementation Guide for Ubuntu
+  - Used for OS-level hardening
+
+- **`CIS_UBUNTU_24.04_STIG_IMPLEMENTATION.md`**: Implementation guide
+  - Documents STIG implementation approach
+
+## Roles Directory Structure
+
+Each role follows the standard Ansible role structure:
+
+```
+roles/
+└── <role-name>/
+    ├── tasks/
+    │   └── main.yml              # Main tasks for the role
+    ├── handlers/
+    │   └── main.yml              # Handlers (service restarts, etc.)
+    ├── templates/                 # Jinja2 templates
+    │   └── *.j2                   # Template files
+    ├── defaults/
+    │   └── main.yml              # Default variables (optional)
+    └── vars/
+        └── main.yml               # Role variables (optional)
+```
+
+### Role Descriptions
+
+1. **`common/`**: Common system configuration
+   - Base system setup
+   - Handlers: SSH restart
+
+2. **`hardening/`**: Security hardening (CIS/STIG compliance)
+   - OS-level security configurations
+   - CIS Ubuntu 24.04 STIG implementation
+   - Defaults: `defaults/main.yml`
+   - Handlers: SSH restart
+
+3. **`kernal/`**: Kernel configuration
+   - Note: Role name has a typo (should be "kernel")
+   - Kernel parameter tuning
+
+4. **`containerd/`**: Container runtime installation
+   - Containerd installation and configuration
+   - CNI plugin setup
+
+5. **`kubernetes/`**: Kubernetes installation and configuration
+   - Kubelet, kubeadm, kubectl installation
+   - Kubelet configuration with CIS compliance
+   - Templates: `kubelet-config.yaml.j2`
+   - Handlers: kubelet restart
+
+6. **`images/`**: Container image management
+   - Pre-pulling container images
+
+7. **`cleanup/`**: System cleanup tasks
+   - Post-installation cleanup
+
+8. **`audit/`**: Audit and compliance tasks
+   - Security audit configurations
+
+## Key Directories
+
+### `.cursor/rules/`
+- Contains Cursor IDE rules and guidelines
+- All rule files use `.mdc` extension
+- Follow kebab-case naming convention
+
+### `group_vars/`
+- Contains variable files organized by group
+- `all.yml` applies to all hosts
+- Can have group-specific files (e.g., `workers.yml`)
+
+### `roles/*/templates/`
+- Jinja2 template files (`.j2` extension)
+- Used for configuration files that need variable substitution
+- Example: `roles/kubernetes/templates/kubelet-config.yaml.j2`
+
+### `roles/*/handlers/`
+- Handler definitions for service restarts and other triggered actions
+- Called via `notify:` in tasks
+- Example: kubelet restart when config changes
+
+## File Naming Conventions
+
+- **Ansible playbooks**: `*.yml` or `*.yaml`
+- **Inventory files**: `inventory.ini` or `hosts.ini`
+- **Template files**: `*.j2` (Jinja2 templates)
+- **Cursor rules**: `*.mdc` (Markdown with frontmatter)
+- **Documentation**: `*.md` (Markdown)
+
+## Important Notes
+
+1. **Role Name Typo**: The `kernal` role should be `kernel` - be aware when referencing
+2. **Missing Role**: Playbook references `monitoring` role but it doesn't exist in the roles directory
+3. **CIS Compliance**: The `kubernetes` role implements CIS Kubernetes Benchmark v1.8.0 requirements
+4. **STIG Compliance**: The `hardening` role implements Ubuntu 24.04 STIG requirements
+5. **Template Variables**: Templates use variables from `group_vars/all.yml` and role defaults
+
+## When Adding New Files
+
+- **New roles**: Create in `roles/<role-name>/` following standard structure
+- **New templates**: Place in `roles/<role-name>/templates/`
+- **New variables**: Add to `group_vars/all.yml` or create group-specific files
+- **New Cursor rules**: Add to `.cursor/rules/` with `.mdc` extension
+- **New documentation**: Place in project root with descriptive name

@@ -1,0 +1,60 @@
+---
+- name: Restart containerd and kubelet on all nodes
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Restart containerd service
+      ansible.builtin.systemd:
+        name: containerd
+        state: restarted
+        enabled: yes
+      register: containerd_result
+
+    - name: Wait for containerd to be running
+      ansible.builtin.systemd:
+        name: containerd
+        state: started
+      register: containerd_status
+      until: containerd_status.status.ActiveState == "active"
+      retries: 10
+      delay: 5
+      failed_when: false
+
+    - name: Verify containerd is active
+      ansible.builtin.assert:
+        that:
+          - containerd_status.status.ActiveState == "active"
+        fail_msg: "containerd failed to start after restart"
+        success_msg: "containerd is running successfully"
+
+    - name: Restart kubelet service
+      ansible.builtin.systemd:
+        name: kubelet
+        state: restarted
+        enabled: yes
+      register: kubelet_result
+
+    - name: Wait for kubelet to be running
+      ansible.builtin.systemd:
+        name: kubelet
+        state: started
+      register: kubelet_status
+      until: kubelet_status.status.ActiveState == "active"
+      retries: 10
+      delay: 5
+      failed_when: false
+
+    - name: Verify kubelet is active
+      ansible.builtin.assert:
+        that:
+          - kubelet_status.status.ActiveState == "active"
+        fail_msg: "kubelet failed to start after restart"
+        success_msg: "kubelet is running successfully"
+
+    - name: Display service status
+      ansible.builtin.debug:
+        msg:
+          - "containerd status: {{ containerd_status.status.ActiveState }}"
+          - "kubelet status: {{ kubelet_status.status.ActiveState }}"

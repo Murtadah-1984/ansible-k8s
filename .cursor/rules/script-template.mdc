@@ -1,0 +1,624 @@
+---
+description: Production-grade Bash script template and best practices for all scripts
+globs: scripts/**/*.sh
+alwaysApply: true
+---
+# Production-Grade Bash Script Template
+
+This document outlines the standard template and best practices for all Bash scripts in this project. All scripts must follow this template to ensure consistency, maintainability, and production-grade quality.
+
+## Template Structure
+
+Every script must follow this exact structure:
+
+```bash
+#!/bin/bash
+# -------------------------------------------------------------------
+# Script: script-name.sh
+# Version: 1.0.0
+# Description: Brief description of what the script does
+# -------------------------------------------------------------------
+
+# ============================================================================
+# STRICT MODE & SAFETY
+# ============================================================================
+set -euo pipefail
+IFS=$'\n\t'
+
+# ============================================================================
+# GLOBAL CONFIGURATION
+# ============================================================================
+SCRIPT_NAME=$(basename "$0")
+LOGFILE="/var/log/${SCRIPT_NAME%.sh}.log"
+DEBUG=${DEBUG:-0}
+
+# ============================================================================
+# COLOR FUNCTIONS
+# ============================================================================
+RED="\e[31m"
+GREEN="\e[32m"
+YELLOW="\e[33m"
+BLUE="\e[34m"
+MAGENTA="\e[35m"
+CYAN="\e[36m"
+BOLD="\e[1m"
+RESET="\e[0m"
+
+info()    { echo -e "${BLUE}[INFO]${RESET} $*"; }
+success() { echo -e "${GREEN}[OK]${RESET} $*"; }
+warn()    { echo -e "${YELLOW}[WARN]${RESET} $*"; }
+error()   { echo -e "${RED}[ERROR]${RESET} $*" >&2; }
+debug()   { [ "$DEBUG" = "1" ] && echo -e "${MAGENTA}[DEBUG]${RESET} $*"; }
+
+# ============================================================================
+# UTILITY FUNCTIONS
+# ============================================================================
+step() {
+    echo -e "\n${BOLD}${CYAN}🚀 $*${RESET}"
+}
+
+run_or_die() {
+    debug "Running: $*"
+    if ! "$@"; then
+        error "Failed: $*"
+        exit 1
+    fi
+}
+
+check_command() {
+    if ! command -v "$1" >/dev/null 2>&1; then
+        debug "$1 not found"
+        return 1
+    fi
+    return 0
+}
+
+# ============================================================================
+# ERROR HANDLING
+# ============================================================================
+trap 'error "Script failed at line $LINENO: $BASH_COMMAND"' ERR
+
+# ============================================================================
+# MAIN SCRIPT
+# ============================================================================
+main() {
+    step "Starting script execution"
+    
+    # Setup logging
+    mkdir -p "$(dirname "$LOGFILE")" 2>/dev/null || true
+    
+    # Your script logic here
+    
+    success "Script completed successfully! 🎉"
+}
+
+# ============================================================================
+# SCRIPT ENTRY POINT
+# ============================================================================
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --debug|-d)
+            DEBUG=1
+            set -x
+            ;;
+        *)
+            warn "Unknown option: $1"
+            ;;
+    esac
+    shift
+done
+
+# Setup logging
+mkdir -p "$(dirname "$LOGFILE")" 2>/dev/null || true
+exec > >(tee -a "$LOGFILE" 2>/dev/null || cat) 2>&1
+
+# Run main function
+main "$@"
+```
+
+## Required Components
+
+### 1. Script Header
+
+Every script must start with a header block:
+
+```bash
+#!/bin/bash
+# -------------------------------------------------------------------
+# Script: script-name.sh
+# Version: 1.0.0
+# Description: Brief description of what the script does
+# -------------------------------------------------------------------
+```
+
+**Requirements:**
+- Always use `#!/bin/bash` (not `#!/bin/sh`)
+- Include script name, version, and description
+- Use consistent formatting with separators
+
+### 2. Strict Mode & Safety
+
+**Mandatory** for all scripts:
+
+```bash
+set -euo pipefail
+IFS=$'\n\t'
+```
+
+**Explanation:**
+- `set -e` → Exit immediately if a command exits with a non-zero status
+- `set -u` → Treat unset variables as an error
+- `set -o pipefail` → Return value of a pipeline is the status of the last command to exit with a non-zero status
+- `IFS=$'\n\t'` → Safe field separator to avoid whitespace issues
+
+### 3. Global Configuration
+
+Standard variables every script should define:
+
+```bash
+SCRIPT_NAME=$(basename "$0")
+LOGFILE="/var/log/${SCRIPT_NAME%.sh}.log"
+DEBUG=${DEBUG:-0}
+```
+
+**Custom variables** should be added after these standard ones.
+
+### 4. Color Functions
+
+**Always include** these color functions:
+
+```bash
+RED="\e[31m"
+GREEN="\e[32m"
+YELLOW="\e[33m"
+BLUE="\e[34m"
+MAGENTA="\e[35m"
+CYAN="\e[36m"
+BOLD="\e[1m"
+RESET="\e[0m"
+
+info()    { echo -e "${BLUE}[INFO]${RESET} $*"; }
+success() { echo -e "${GREEN}[OK]${RESET} $*"; }
+warn()    { echo -e "${YELLOW}[WARN]${RESET} $*"; }
+error()   { echo -e "${RED}[ERROR]${RESET} $*" >&2; }
+debug()   { [ "$DEBUG" = "1" ] && echo -e "${MAGENTA}[DEBUG]${RESET} $*"; }
+```
+
+**Usage:**
+- `info "Message"` → Blue informational message
+- `success "Message"` → Green success message
+- `warn "Message"` → Yellow warning message
+- `error "Message"` → Red error message (to stderr)
+- `debug "Message"` → Magenta debug message (only when DEBUG=1)
+
+### 5. Utility Functions
+
+**Standard utility functions:**
+
+#### `step()` - Step Headers
+
+```bash
+step() {
+    echo -e "\n${BOLD}${CYAN}🚀 $*${RESET}"
+}
+```
+
+**Usage:** Before major operations
+```bash
+step "Installing packages..."
+step "Configuring system..."
+```
+
+#### `run_or_die()` - Command Execution
+
+```bash
+run_or_die() {
+    debug "Running: $*"
+    if ! "$@"; then
+        error "Failed: $*"
+        exit 1
+    fi
+}
+```
+
+**Usage:** For critical commands that must succeed
+```bash
+run_or_die apt-get update
+run_or_die systemctl enable service
+```
+
+#### `check_command()` - Command Validation
+
+```bash
+check_command() {
+    if ! command -v "$1" >/dev/null 2>&1; then
+        debug "$1 not found"
+        return 1
+    fi
+    return 0
+}
+```
+
+**Usage:** Check if a command exists before using it
+```bash
+if ! check_command docker; then
+    error "docker is required"
+    exit 1
+fi
+```
+
+### 6. Error Handling
+
+**Always include** error trap:
+
+```bash
+trap 'error "Script failed at line $LINENO: $BASH_COMMAND"' ERR
+```
+
+This provides immediate feedback on script failures with exact line numbers.
+
+### 7. Main Function
+
+**All script logic** should be in a `main()` function:
+
+```bash
+main() {
+    step "Starting script execution"
+    
+    # Setup logging
+    mkdir -p "$(dirname "$LOGFILE")" 2>/dev/null || true
+    
+    # Your script logic here
+    
+    success "Script completed successfully! 🎉"
+}
+```
+
+**Benefits:**
+- Clean separation of setup and logic
+- Easier testing and debugging
+- Consistent structure
+
+### 8. Command Line Arguments
+
+**Standard argument parsing:**
+
+```bash
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --debug|-d)
+            DEBUG=1
+            set -x
+            ;;
+        --help|-h)
+            echo "Usage: $0 [--debug] [--help]"
+            exit 0
+            ;;
+        *)
+            warn "Unknown option: $1"
+            ;;
+    esac
+    shift
+done
+```
+
+**Add custom options** as needed for your script.
+
+### 9. Logging Setup
+
+**Always setup logging:**
+
+```bash
+mkdir -p "$(dirname "$LOGFILE")" 2>/dev/null || true
+exec > >(tee -a "$LOGFILE" 2>/dev/null || cat) 2>&1
+```
+
+This ensures:
+- All output is logged to `/var/log/<script-name>.log`
+- Output is also displayed on console
+- Graceful fallback if logging fails
+
+### 10. Script Entry Point
+
+**Always end with:**
+
+```bash
+# Run main function
+main "$@"
+```
+
+## Best Practices
+
+### Output Messages
+
+**Always use color functions** instead of plain `echo`:
+
+```bash
+# ❌ BAD
+echo "Installing package..."
+echo "ERROR: Installation failed"
+
+# ✅ GOOD
+info "Installing package..."
+error "Installation failed"
+```
+
+### Command Execution
+
+**Use `run_or_die()` for critical commands:**
+
+```bash
+# ❌ BAD
+apt-get install -y package
+
+# ✅ GOOD
+run_or_die apt-get install -y package
+```
+
+**For non-critical commands**, use regular execution with error handling:
+
+```bash
+# For commands that can fail gracefully
+systemctl stop service 2>/dev/null || true
+```
+
+### Step Organization
+
+**Use `step()` for major operations:**
+
+```bash
+step "Installing dependencies..."
+run_or_die apt-get update
+run_or_die apt-get install -y package1 package2
+success "Dependencies installed"
+
+step "Configuring service..."
+# Configuration logic here
+success "Service configured"
+```
+
+### Error Messages
+
+**Always provide context:**
+
+```bash
+# ❌ BAD
+error "Failed"
+
+# ✅ GOOD
+error "Failed to install package: $package_name"
+error "Command failed: apt-get install -y $package"
+```
+
+### Debug Mode
+
+**Use `debug()` for verbose information:**
+
+```bash
+debug "Processing file: $filename"
+debug "Current value: $variable"
+debug "Running command: $command"
+```
+
+Debug messages only appear when `DEBUG=1` or `--debug` flag is used.
+
+### File Operations
+
+**Always backup before editing:**
+
+```bash
+# Backup before modification
+cp /etc/config/file /etc/config/file.bak 2>/dev/null || true
+
+# Or use safe_edit function (if defined)
+safe_edit /etc/config/file 's/old/new/' ""
+```
+
+### Validation
+
+**Validate prerequisites early:**
+
+```bash
+# Check for required commands
+if ! check_command required-tool; then
+    error "required-tool is not installed"
+    exit 1
+fi
+
+# Check for required files
+if [ ! -f "/required/file" ]; then
+    error "Required file not found: /required/file"
+    exit 1
+fi
+```
+
+## Complete Example
+
+Here's a complete example following the template:
+
+```bash
+#!/bin/bash
+# -------------------------------------------------------------------
+# Script: example-install.sh
+# Version: 1.0.0
+# Description: Example script demonstrating the template
+# -------------------------------------------------------------------
+
+# ============================================================================
+# STRICT MODE & SAFETY
+# ============================================================================
+set -euo pipefail
+IFS=$'\n\t'
+
+# ============================================================================
+# GLOBAL CONFIGURATION
+# ============================================================================
+SCRIPT_NAME=$(basename "$0")
+LOGFILE="/var/log/${SCRIPT_NAME%.sh}.log"
+DEBUG=${DEBUG:-0}
+PACKAGE_NAME="${package_name:-example-package}"
+
+# ============================================================================
+# COLOR FUNCTIONS
+# ============================================================================
+RED="\e[31m"
+GREEN="\e[32m"
+YELLOW="\e[33m"
+BLUE="\e[34m"
+MAGENTA="\e[35m"
+CYAN="\e[36m"
+BOLD="\e[1m"
+RESET="\e[0m"
+
+info()    { echo -e "${BLUE}[INFO]${RESET} $*"; }
+success() { echo -e "${GREEN}[OK]${RESET} $*"; }
+warn()    { echo -e "${YELLOW}[WARN]${RESET} $*"; }
+error()   { echo -e "${RED}[ERROR]${RESET} $*" >&2; }
+debug()   { [ "$DEBUG" = "1" ] && echo -e "${MAGENTA}[DEBUG]${RESET} $*"; }
+
+# ============================================================================
+# UTILITY FUNCTIONS
+# ============================================================================
+step() {
+    echo -e "\n${BOLD}${CYAN}🚀 $*${RESET}"
+}
+
+run_or_die() {
+    debug "Running: $*"
+    if ! "$@"; then
+        error "Failed: $*"
+        exit 1
+    fi
+}
+
+check_command() {
+    if ! command -v "$1" >/dev/null 2>&1; then
+        debug "$1 not found"
+        return 1
+    fi
+    return 0
+}
+
+# ============================================================================
+# ERROR HANDLING
+# ============================================================================
+trap 'error "Script failed at line $LINENO: $BASH_COMMAND"' ERR
+
+# ============================================================================
+# MAIN SCRIPT
+# ============================================================================
+main() {
+    step "Installing ${PACKAGE_NAME}"
+    
+    # Setup logging
+    mkdir -p "$(dirname "$LOGFILE")" 2>/dev/null || true
+    
+    # Validate prerequisites
+    step "Checking prerequisites..."
+    if ! check_command apt-get; then
+        error "apt-get is required but not found"
+        exit 1
+    fi
+    success "Prerequisites validated"
+    
+    # Install package
+    step "Installing package..."
+    run_or_die apt-get update
+    run_or_die apt-get install -y "${PACKAGE_NAME}"
+    success "Package installed"
+    
+    # Verify installation
+    step "Verifying installation..."
+    if check_command "${PACKAGE_NAME}"; then
+        success "Installation verified"
+    else
+        warn "Package installed but command not found in PATH"
+    fi
+    
+    success "Installation completed successfully! 🎉"
+}
+
+# ============================================================================
+# SCRIPT ENTRY POINT
+# ============================================================================
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --debug|-d)
+            DEBUG=1
+            set -x
+            ;;
+        --help|-h)
+            echo "Usage: $0 [--debug] [--help]"
+            exit 0
+            ;;
+        *)
+            warn "Unknown option: $1"
+            ;;
+    esac
+    shift
+done
+
+# Setup logging
+mkdir -p "$(dirname "$LOGFILE")" 2>/dev/null || true
+exec > >(tee -a "$LOGFILE" 2>/dev/null || cat) 2>&1
+
+# Run main function
+main "$@"
+```
+
+## Checklist
+
+When creating a new script, ensure:
+
+- [ ] Script header with name, version, and description
+- [ ] Strict mode enabled (`set -euo pipefail`)
+- [ ] `IFS=$'\n\t'` set
+- [ ] Standard global variables defined
+- [ ] All color functions included
+- [ ] Standard utility functions included
+- [ ] Error trap configured
+- [ ] Main function contains all logic
+- [ ] Command line argument parsing
+- [ ] Logging setup configured
+- [ ] All `echo` statements replaced with color functions
+- [ ] Critical commands use `run_or_die()`
+- [ ] Prerequisites validated early
+- [ ] Success banner at end of main function
+- [ ] Script entry point calls `main "$@"`
+
+## Additional Utilities (Optional)
+
+For scripts that need file editing, you can add:
+
+```bash
+# Safe file edit with backup
+safe_edit() {
+    local file="$1"
+    local pattern="$2"
+    
+    if [ -f "$file" ]; then
+        cp "$file" "${file}.bak" 2>/dev/null || true
+        sed -i "$pattern" "$file"
+    fi
+}
+```
+
+For scripts with cleanup needs:
+
+```bash
+TMP_DIR=$(mktemp -d)
+
+cleanup() {
+    rm -rf "$TMP_DIR" 2>/dev/null || true
+}
+
+trap cleanup EXIT
+```
+
+## References
+
+- All existing scripts in `scripts/` directory follow this template
+- See `scripts/00-unique-identifiers.sh` for a complete example
+- See `scripts/01-hardening.sh` for a complex example with multiple steps

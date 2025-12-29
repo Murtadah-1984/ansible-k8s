@@ -1,0 +1,527 @@
+---
+# Kubernetes Cluster Bootstrap Playbook
+# This playbook bootstraps a complete Kubernetes cluster following CIS best practices
+#
+# Prerequisites:
+# - All nodes must have been prepared with node-bootstrap.yml first
+# - SSH access to all nodes
+# - Network connectivity between nodes
+#
+# Usage:
+#   ansible-playbook -i inventory.ini cluster-bootstrap.yml
+#
+# Variables:
+#   - kubernetes_version: Kubernetes version (default: from group_vars/all.yml)
+#   - cluster_name: Cluster name (default: kubernetes)
+#   - pod_network_cidr: Pod network CIDR (default: 10.244.0.0/16)
+#   - service_cidr: Service CIDR (default: 10.96.0.0/12)
+#   - control_plane_endpoint: Load balancer endpoint (optional)
+#   - cni_plugin: CNI plugin to use (default: calico)
+
+- name: Bootstrap All Kubernetes Nodes
+  hosts: control:workers
+  become: true
+  gather_facts: true
+  serial: "{{ node_bootstrap_serial }}"
+  
+  roles:
+    - common
+    - hardening
+    - kernal
+    - containerd
+    - kubernetes
+    - images
+    - cleanup
+
+- name: Initialize First Control Plane Node
+  hosts: control[0]
+  become: true
+  gather_facts: true
+  
+  tasks:
+    - name: Check if cluster is already initialized
+      stat:
+        path: /etc/kubernetes/admin.conf
+      register: admin_conf_exists
+      changed_when: false
+    
+    - name: Fail if cluster already initialized
+      assert:
+        that:
+          - not admin_conf_exists.stat.exists
+        fail_msg: "Cluster already initialized. Remove /etc/kubernetes/admin.conf to reinitialize."
+        success_msg: "Cluster not initialized, proceeding with bootstrap"
+    
+    - name: Create kubeadm config directory
+      file:
+        path: /etc/kubernetes
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+    
+    - name: Generate kubeadm init configuration
+      template:
+        src: kubeadm-init-config.yaml.j2
+        dest: /etc/kubernetes/kubeadm-config.yaml
+        owner: root
+        group: root
+        mode: '0600'
+      when: not admin_conf_exists.stat.exists
+    
+    - name: Generate certificate key for HA setup
+      command: kubeadm certs certificate-key
+      register: cert_key
+      changed_when: false
+      when: 
+        - not admin_conf_exists.stat.exists
+        - groups['control'] | length > 1
+    
+    - name: Initialize Kubernetes cluster
+      shell: |
+        kubeadm init \
+        --config=/etc/kubernetes/kubeadm-config.yaml \
+        {% if groups['control'] | length > 1 %}--upload-certs \
+        --certificate-key={{ cert_key.stdout | trim if cert_key.stdout is defined else '' }}{% endif %}
+      register: kubeadm_init
+      when: not admin_conf_exists.stat.exists
+      async: 600
+      poll: 10
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+    
+    - name: Wait for kubeadm init to complete
+      async_status:
+        jid: "{{ kubeadm_init.ansible_job_id }}"
+      register: init_job_result
+      until: init_job_result.finished
+      retries: 60
+      delay: 10
+      when: not admin_conf_exists.stat.exists
+    
+    - name: Display kubeadm join command for control plane
+      debug:
+        msg: "{{ init_job_result.stdout_lines | select('match', 'kubeadm join') | list | first | default('Check kubeadm init output') }}"
+      when: not admin_conf_exists.stat.exists
+    
+    - name: Display kubeadm join command for workers
+      debug:
+        msg: "{{ init_job_result.stdout_lines | select('match', 'kubeadm join') | list | last | default('Check kubeadm init output') }}"
+      when: not admin_conf_exists.stat.exists
+    
+    - name: Extract join commands
+      set_fact:
+        control_plane_join: "{{ init_job_result.stdout_lines | select('match', '.*--control-plane.*') | list | first | default('') }}"
+        worker_join: "{{ init_job_result.stdout_lines | select('match', '.*kubeadm join.*') | reject('match', '.*--control-plane.*') | list | first | default('') }}"
+      when: 
+        - not admin_conf_exists.stat.exists
+        - init_job_result.stdout_lines is defined
+    
+    - name: Save control plane join command
+      copy:
+        content: "{{ control_plane_join }}"
+        dest: /tmp/control-plane-join-command.sh
+        mode: '0600'
+        owner: root
+        group: root
+      when: 
+        - not admin_conf_exists.stat.exists
+        - control_plane_join is defined
+        - control_plane_join != ''
+    
+    - name: Save worker join command
+      copy:
+        content: "{{ worker_join }}"
+        dest: /tmp/worker-join-command.sh
+        mode: '0600'
+        owner: root
+        group: root
+      when: 
+        - not admin_conf_exists.stat.exists
+        - worker_join is defined
+        - worker_join != ''
+    
+    - name: Set up kubectl for root user
+      block:
+        - name: Create .kube directory
+          file:
+            path: /root/.kube
+            state: directory
+            mode: '0700'
+            owner: root
+            group: root
+        
+        - name: Copy admin.conf to .kube/config
+          copy:
+            src: /etc/kubernetes/admin.conf
+            dest: /root/.kube/config
+            remote_src: true
+            mode: '0600'
+            owner: root
+            group: root
+        
+        - name: Set KUBECONFIG environment variable
+          lineinfile:
+            path: /root/.bashrc
+            line: 'export KUBECONFIG=/root/.kube/config'
+            create: true
+      when: admin_conf_exists.stat.exists or (init_job_result.finished is defined and init_job_result.finished)
+    
+    - name: Wait for API server to be ready
+      uri:
+        url: "https://{{ ansible_default_ipv4.address }}:6443/healthz"
+        method: GET
+        validate_certs: false
+        status_code: [200, 401, 403]
+      register: api_server_health
+      until: api_server_health.status in [200, 401, 403]
+      retries: 30
+      delay: 10
+      ignore_errors: true
+    
+    - name: Remove taint from master node (allow pods on control plane)
+      command: kubectl taint nodes {{ inventory_hostname }} node-role.kubernetes.io/control-plane:NoSchedule-
+      when: allow_pods_on_control_plane
+      ignore_errors: true
+
+- name: Install Control Plane Tools
+  hosts: control
+  become: true
+  gather_facts: true
+  
+  tasks:
+    - name: Install Helm
+      block:
+        - name: Check if Helm is already installed
+          command: helm version --client
+          register: helm_check
+          changed_when: false
+          failed_when: false
+        
+        - name: Download Helm install script
+          get_url:
+            url: https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+            dest: /tmp/get-helm-3.sh
+            mode: '0755'
+          when: helm_check.rc != 0
+        
+        - name: Install Helm
+          command: /tmp/get-helm-3.sh
+          when: helm_check.rc != 0
+        
+        - name: Verify Helm installation
+          command: helm version --client
+          register: helm_version
+          changed_when: false
+        
+        - name: Display Helm version
+          debug:
+            msg: "Helm installed: {{ helm_version.stdout_lines[0] }}"
+    
+    - name: Create kubectl alias 'k'
+      block:
+        - name: Check if alias already exists in .bashrc
+          shell: grep -q "alias k=" /root/.bashrc
+          register: alias_check
+          changed_when: false
+          failed_when: false
+          ignore_errors: true
+        
+        - name: Add kubectl alias to .bashrc
+          lineinfile:
+            path: /root/.bashrc
+            line: "alias k='kubectl'"
+            create: true
+          when: alias_check.rc != 0
+        
+        - name: Check if alias already exists in /etc/bash.bashrc
+          shell: grep -q "alias k=" /etc/bash.bashrc
+          register: alias_check_global
+          changed_when: false
+          failed_when: false
+          ignore_errors: true
+        
+        - name: Add kubectl alias to /etc/bash.bashrc for all users
+          lineinfile:
+            path: /etc/bash.bashrc
+            line: "alias k='kubectl'"
+            create: true
+          when: alias_check_global.rc != 0
+    
+    - name: Install calicoctl
+      block:
+        - name: Check if calicoctl is already installed
+          command: calicoctl version
+          register: calicoctl_check
+          changed_when: false
+          failed_when: false
+        
+        - name: Download calicoctl
+          get_url:
+            url: https://github.com/projectcalico/calico/releases/download/v3.31.3/calicoctl-linux-amd64
+            dest: /tmp/calicoctl
+            mode: '0755'
+          when: calicoctl_check.rc != 0
+        
+        - name: Move calicoctl to /usr/local/bin
+          copy:
+            src: /tmp/calicoctl
+            dest: /usr/local/bin/calicoctl
+            mode: '0755'
+            remote_src: true
+          when: calicoctl_check.rc != 0
+        
+        - name: Verify calicoctl installation
+          command: calicoctl version
+          register: calicoctl_version
+          changed_when: false
+        
+        - name: Display calicoctl version
+          debug:
+            msg: "calicoctl installed: {{ calicoctl_version.stdout_lines[0] if calicoctl_version.stdout_lines is defined else 'Version check completed' }}"
+    
+    - name: Install kube-bench
+      block:
+        - name: Check if kube-bench is already installed
+          command: kube-bench version
+          register: kube_bench_check
+          changed_when: false
+          failed_when: false
+        
+        - name: Download kube-bench binary
+          get_url:
+            url: https://github.com/aquasecurity/kube-bench/releases/latest/download/kube-bench-linux-amd64
+            dest: /tmp/kube-bench
+            mode: '0755'
+          when: kube_bench_check.rc != 0
+        
+        - name: Move kube-bench to /usr/local/bin
+          copy:
+            src: /tmp/kube-bench
+            dest: /usr/local/bin/kube-bench
+            mode: '0755'
+            remote_src: true
+          when: kube_bench_check.rc != 0
+        
+        - name: Verify kube-bench installation
+          command: kube-bench version
+          register: kube_bench_version
+          changed_when: false
+        
+        - name: Display kube-bench version
+          debug:
+            msg: "kube-bench installed: {{ kube_bench_version.stdout_lines[0] if kube_bench_version.stdout_lines is defined else 'Version check completed' }}"
+    
+    - name: Install Argo CD CLI
+      block:
+        - name: Check if argocd is already installed
+          command: argocd version --client
+          register: argocd_check
+          changed_when: false
+          failed_when: false
+        
+        - name: Download Argo CD CLI
+          get_url:
+            url: https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+            dest: /usr/local/bin/argocd
+            mode: '0755'
+          when: argocd_check.rc != 0
+        
+        - name: Verify Argo CD CLI installation
+          command: argocd version --client
+          register: argocd_version
+          changed_when: false
+        
+        - name: Display Argo CD CLI version
+          debug:
+            msg: "Argo CD CLI installed: {{ argocd_version.stdout_lines[0] if argocd_version.stdout_lines is defined else 'Version check completed' }}"
+
+- name: Join Additional Control Plane Nodes
+  hosts: control[1:]
+  become: true
+  gather_facts: true
+  
+  vars:
+    first_control_plane: "{{ groups['control'][0] }}"
+  
+  tasks:
+    - name: Check if node is already joined
+      stat:
+        path: /etc/kubernetes/kubelet.conf
+      register: kubelet_conf_exists
+      changed_when: false
+    
+    - name: Get join command from first control plane
+      shell: cat /tmp/control-plane-join-command.sh
+      register: join_command_raw
+      delegate_to: "{{ first_control_plane }}"
+      when: not kubelet_conf_exists.stat.exists
+      changed_when: false
+    
+    - name: Join control plane node
+      shell: "{{ join_command_raw.stdout | trim }}"
+      when: 
+        - not kubelet_conf_exists.stat.exists
+        - join_command_raw.stdout is defined
+        - join_command_raw.stdout | trim != ''
+      async: 300
+      poll: 10
+    
+    - name: Wait for node to be ready
+      command: kubectl get nodes {{ inventory_hostname }} --no-headers
+      register: node_status
+      until: node_status.rc == 0 and ' Ready ' in node_status.stdout
+      retries: 30
+      delay: 10
+      delegate_to: "{{ first_control_plane }}"
+      when: not kubelet_conf_exists.stat.exists
+      ignore_errors: true
+
+- name: Join Worker Nodes
+  hosts: workers
+  become: true
+  gather_facts: true
+  
+  vars:
+    first_control_plane: "{{ groups['control'][0] }}"
+  
+  tasks:
+    - name: Check if node is already joined
+      stat:
+        path: /etc/kubernetes/kubelet.conf
+      register: kubelet_conf_exists
+      changed_when: false
+    
+    - name: Get join command from first control plane
+      shell: cat /tmp/worker-join-command.sh
+      register: join_command_raw
+      delegate_to: "{{ first_control_plane }}"
+      when: not kubelet_conf_exists.stat.exists
+      changed_when: false
+    
+    - name: Join worker node
+      shell: "{{ join_command_raw.stdout | trim }}"
+      when: 
+        - not kubelet_conf_exists.stat.exists
+        - join_command_raw.stdout is defined
+        - join_command_raw.stdout | trim != ''
+      async: 300
+      poll: 10
+    
+    - name: Wait for node to be ready
+      command: kubectl get nodes {{ inventory_hostname }} --no-headers
+      register: node_status
+      until: node_status.rc == 0 and ' Ready ' in node_status.stdout
+      retries: 30
+      delay: 10
+      delegate_to: "{{ first_control_plane }}"
+      when: not kubelet_conf_exists.stat.exists
+      ignore_errors: true
+
+- name: Install CNI Plugin
+  hosts: control[0]
+  become: true
+  gather_facts: true
+  
+  tasks:
+    - name: Check if CNI is already installed
+      command: kubectl get pods -n kube-system | grep -E "(calico|flannel|weave|cilium)" | grep Running
+      register: cni_running
+      changed_when: false
+      failed_when: false
+    
+    - name: Install Calico CNI
+      shell: |
+        kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/calico.yaml
+      when: 
+        - cni_plugin == 'calico'
+        - cni_running.rc != 0
+      environment:
+        KUBECONFIG: /root/.kube/config
+    
+    - name: Install Flannel CNI
+      shell: |
+        kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+      when: 
+        - cni_plugin == 'flannel'
+        - cni_running.rc != 0
+      environment:
+        KUBECONFIG: /root/.kube/config
+    
+    - name: Wait for CNI pods to be ready
+      command: kubectl get pods -n kube-system -l k8s-app={{ 'calico-node' if cni_plugin == 'calico' else 'kube-flannel-ds' }} --field-selector=status.phase=Running
+      register: cni_pods
+      until: cni_pods.stdout_lines | length > 0
+      retries: 30
+      delay: 10
+      when: cni_running.rc != 0
+      ignore_errors: true
+    
+    - name: Wait for all nodes to be Ready
+      command: kubectl get nodes --no-headers | grep -v Ready | wc -l
+      register: not_ready_nodes
+      until: not_ready_nodes.stdout | trim == '0'
+      retries: 30
+      delay: 10
+      environment:
+        KUBECONFIG: /root/.kube/config
+
+- name: Configure Cluster Access
+  hosts: control[0]
+  become: true
+  gather_facts: true
+  
+  tasks:
+    - name: Display cluster information
+      debug:
+        msg:
+          - "Kubernetes cluster has been successfully bootstrapped!"
+          - "Control plane endpoint: {{ control_plane_endpoint if control_plane_endpoint else (groups['control'][0] + ':6443') }}"
+          - "To access the cluster, copy /etc/kubernetes/admin.conf to your local machine:"
+          - "  scp {{ ansible_user }}@{{ ansible_default_ipv4.address }}:/etc/kubernetes/admin.conf ~/.kube/config"
+          - "  kubectl get nodes"
+    
+    - name: Get cluster nodes
+      command: kubectl get nodes -o wide
+      register: cluster_nodes
+      environment:
+        KUBECONFIG: /root/.kube/config
+      changed_when: false
+    
+    - name: Display cluster nodes
+      debug:
+        var: cluster_nodes.stdout_lines
+
+- name: Apply CIS-Compliant Cluster Configuration
+  hosts: control[0]
+  become: true
+  gather_facts: true
+  
+  tasks:
+    - name: Create kube-system namespace if not exists
+      command: kubectl create namespace kube-system --dry-run=client -o yaml | kubectl apply -f -
+      environment:
+        KUBECONFIG: /root/.kube/config
+      changed_when: false
+      ignore_errors: true
+    
+    - name: Apply Pod Security Standards (Restricted)
+      shell: |
+        kubectl label --overwrite namespace kube-system pod-security.kubernetes.io/enforce=restricted
+        kubectl label --overwrite namespace kube-system pod-security.kubernetes.io/audit=restricted
+        kubectl label --overwrite namespace kube-system pod-security.kubernetes.io/warn=restricted
+      environment:
+        KUBECONFIG: /root/.kube/config
+      ignore_errors: true
+    
+    - name: Display cluster status
+      command: kubectl cluster-info
+      environment:
+        KUBECONFIG: /root/.kube/config
+      register: cluster_info
+      changed_when: false
+    
+    - name: Show cluster info
+      debug:
+        var: cluster_info.stdout_lines
+

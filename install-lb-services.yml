@@ -1,0 +1,367 @@
+---
+- name: Install HAProxy and Keepalived on load balancer nodes
+  hosts: lb
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Display installation information
+      ansible.builtin.debug:
+        msg:
+          - "======================================================"
+          - "  HAProxy & Keepalived Installation"
+          - "======================================================"
+          - ""
+          - "Target hosts: Load balancer nodes [lb]"
+          - "Services to install:"
+          - "  - HAProxy (load balancer)"
+          - "  - Keepalived (high availability)"
+          - ""
+          - "Control plane backend nodes:"
+          - "  {{ control_plane_nodes | map(attribute='name') | join(', ') }}"
+          - ""
+          - "======================================================"
+      run_once: true
+
+    # =============================================================================
+    # 1) INSTALL PACKAGES
+    # =============================================================================
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install HAProxy
+      ansible.builtin.apt:
+        name: haproxy
+        state: present
+
+    - name: Install Keepalived
+      ansible.builtin.apt:
+        name: keepalived
+        state: present
+
+    - name: Install curl (required for health check script)
+      ansible.builtin.apt:
+        name: curl
+        state: present
+
+    # =============================================================================
+    # 2) CREATE KEEPALIVED HEALTH CHECK SCRIPT
+    # =============================================================================
+    - name: Ensure keepalived configuration directory exists
+      ansible.builtin.file:
+        path: /etc/keepalived
+        state: directory
+        mode: '0755'
+
+    - name: Create Keepalived health check script
+      ansible.builtin.copy:
+        dest: /etc/keepalived/check_apiserver.sh
+        content: |
+          #!/bin/sh
+
+          APISERVER_DEST_PORT=8443
+
+          errorExit() {
+
+              echo "*** $*" 1>&2
+
+              exit 1
+
+          }
+
+          # Check API-server health through HAProxy on localhost:8443
+
+          curl -sfk --max-time 2 "https://localhost:${APISERVER_DEST_PORT}/healthz" -o /dev/null \
+
+            || errorExit "Error GET https://localhost:${APISERVER_DEST_PORT}/healthz"
+        mode: '0755'
+        owner: root
+        group: root
+
+    # =============================================================================
+    # 2.5) DETECT NETWORK INTERFACE AND DETERMINE KEEPALIVED ROLE
+    # =============================================================================
+    - name: Get default network interface
+      ansible.builtin.set_fact:
+        keepalived_interface_detected: "{{ ansible_default_ipv4.interface }}"
+      when: ansible_default_ipv4 is defined
+
+    - name: Set network interface for Keepalived (use detected interface or configured value)
+      ansible.builtin.set_fact:
+        keepalived_interface_final: "{{ keepalived_interface if keepalived_interface else keepalived_interface_detected }}"
+
+    - name: Determine Keepalived role (MASTER for first node, BACKUP for others)
+      ansible.builtin.set_fact:
+        keepalived_role: "{{ 'MASTER' if groups['lb'][0] == inventory_hostname else 'BACKUP' }}"
+        keepalived_priority: "{{ 101 if groups['lb'][0] == inventory_hostname else 90 }}"
+
+    - name: Display Keepalived configuration
+      ansible.builtin.debug:
+        msg:
+          - "Keepalived role: {{ keepalived_role }}"
+          - "Priority: {{ keepalived_priority }}"
+          - "Interface: {{ keepalived_interface_final }}"
+          - "Virtual IP: {{ keepalived_virtual_ip }}"
+      run_once: false
+
+    # =============================================================================
+    # 2.6) CREATE KEEPALIVED CONFIGURATION
+    # =============================================================================
+    - name: Check if Keepalived configuration exists
+      ansible.builtin.stat:
+        path: /etc/keepalived/keepalived.conf
+      register: keepalived_config_stat
+
+    - name: Backup existing Keepalived configuration
+      ansible.builtin.copy:
+        src: /etc/keepalived/keepalived.conf
+        dest: /etc/keepalived/keepalived.conf.backup
+        remote_src: yes
+      when: keepalived_config_stat.stat.exists
+      failed_when: false
+
+    - name: Create Keepalived configuration
+      ansible.builtin.copy:
+        dest: /etc/keepalived/keepalived.conf
+        content: |
+          ! /etc/keepalived/keepalived.conf
+
+          global_defs {
+
+              router_id K8S_CP_VRRP
+
+          }
+
+
+
+          vrrp_script check_apiserver {
+
+            script "/etc/keepalived/check_apiserver.sh"
+
+            interval 3
+
+            weight -2
+
+            fall 10
+
+            rise 2
+
+          }
+
+
+
+          vrrp_instance VI_1 {
+
+              state {{ keepalived_role }}
+
+              interface {{ keepalived_interface_final }}
+
+              virtual_router_id {{ keepalived_virtual_router_id }}
+
+              priority {{ keepalived_priority }}
+
+              authentication {
+
+                  auth_type PASS
+
+                  auth_pass {{ keepalived_auth_pass }}
+
+              }
+
+              virtual_ipaddress {
+
+                  {{ keepalived_virtual_ip }}
+
+              }
+
+              track_script {
+
+                  check_apiserver
+
+              }
+          {% if keepalived_role == 'MASTER' %}
+              nopreempt
+          {% endif %}
+
+          }
+        mode: '0644'
+        owner: root
+        group: root
+
+    # =============================================================================
+    # 3) VALIDATE KEEPALIVED CONFIGURATION
+    # =============================================================================
+    - name: Validate Keepalived configuration
+      ansible.builtin.command:
+        cmd: keepalived -t -f /etc/keepalived/keepalived.conf
+      register: keepalived_validate
+      changed_when: false
+      failed_when: false
+
+    - name: Display Keepalived validation result
+      ansible.builtin.debug:
+        msg: "{{ keepalived_validate.stdout_lines + keepalived_validate.stderr_lines }}"
+      when: keepalived_validate.stdout_lines is defined or keepalived_validate.stderr_lines is defined
+
+    # =============================================================================
+    # 4) CREATE HAPROXY CONFIGURATION
+    # =============================================================================
+    - name: Check if HAProxy configuration exists
+      ansible.builtin.stat:
+        path: /etc/haproxy/haproxy.cfg
+      register: haproxy_config_stat
+
+    - name: Backup existing HAProxy configuration
+      ansible.builtin.copy:
+        src: /etc/haproxy/haproxy.cfg
+        dest: /etc/haproxy/haproxy.cfg.backup
+        remote_src: yes
+      when: haproxy_config_stat.stat.exists
+      failed_when: false
+
+    - name: Create HAProxy configuration
+      ansible.builtin.copy:
+        dest: /etc/haproxy/haproxy.cfg
+        content: |
+          #---------------------------------------------------------------------
+          # Global settings
+          #---------------------------------------------------------------------
+          global
+              log stdout format raw local0
+              daemon
+
+
+
+          #---------------------------------------------------------------------
+          # common defaults that all the 'listen' and 'backend' sections will
+          # use if not designated in their block
+          #---------------------------------------------------------------------
+          defaults
+              mode                    http
+              log                     global
+              option                  httplog
+              option                  dontlognull
+              option http-server-close
+              option forwardfor       except 127.0.0.0/8
+              option                  redispatch
+              retries                 1
+              timeout http-request    10s
+              timeout queue           20s
+              timeout connect         5s
+              timeout client          35s
+              timeout server          35s
+              timeout http-keep-alive 10s
+              timeout check           10s
+
+
+
+          #---------------------------------------------------------------------
+          # apiserver frontend which proxys to the control plane nodes
+          #---------------------------------------------------------------------
+          frontend apiserver
+              bind *:8443
+              mode tcp
+              option tcplog
+              default_backend apiserverbackend
+
+
+
+          backend apiserverbackend
+              option httpchk
+
+
+
+              http-check connect ssl
+              http-check send meth GET uri /healthz
+              http-check expect status 200
+
+
+
+              mode tcp
+              balance     roundrobin
+              server k8s-cp-01 10.0.20.11:6443 check verify none
+              server k8s-cp-02 10.0.20.12:6443 check verify none
+              server k8s-cp-03 10.0.20.13:6443 check verify none
+        mode: '0644'
+        owner: root
+        group: root
+
+    # =============================================================================
+    # 5) VALIDATE HAPROXY CONFIGURATION
+    # =============================================================================
+    - name: Validate HAProxy configuration
+      ansible.builtin.command:
+        cmd: haproxy -c -f /etc/haproxy/haproxy.cfg
+      register: haproxy_validate
+      changed_when: false
+
+    - name: Display HAProxy validation result
+      ansible.builtin.debug:
+        msg: "{{ haproxy_validate.stdout_lines }}"
+
+    # =============================================================================
+    # 6) ENABLE AND START SERVICES
+    # =============================================================================
+    - name: Enable HAProxy service
+      ansible.builtin.systemd:
+        name: haproxy
+        enabled: yes
+
+    - name: Start HAProxy service
+      ansible.builtin.systemd:
+        name: haproxy
+        state: started
+        daemon_reload: yes
+
+    - name: Enable Keepalived service
+      ansible.builtin.systemd:
+        name: keepalived
+        enabled: yes
+
+    - name: Start Keepalived service
+      ansible.builtin.systemd:
+        name: keepalived
+        state: started
+        daemon_reload: yes
+
+    # =============================================================================
+    # 7) VERIFY SERVICES STATUS
+    # =============================================================================
+    - name: Check HAProxy service status
+      ansible.builtin.systemd:
+        name: haproxy
+      register: haproxy_status
+      changed_when: false
+
+    - name: Check Keepalived service status
+      ansible.builtin.systemd:
+        name: keepalived
+      register: keepalived_status
+      changed_when: false
+
+    - name: Display installation summary
+      ansible.builtin.debug:
+        msg:
+          - "======================================================"
+          - "✔ Installation completed on {{ inventory_hostname }}"
+          - ""
+          - "HAProxy status: {{ haproxy_status.status.ActiveState }}"
+          - "Keepalived status: {{ keepalived_status.status.ActiveState }}"
+          - ""
+          - "Configuration files:"
+          - "  - /etc/haproxy/haproxy.cfg"
+          - "  - /etc/keepalived/keepalived.conf"
+          - "  - /etc/keepalived/check_apiserver.sh"
+          - ""
+          - "HAProxy is listening on port 8443"
+          - "Keepalived role: {{ keepalived_role }} (priority: {{ keepalived_priority }})"
+          - "Keepalived virtual IP: {{ keepalived_virtual_ip }}"
+          - "Keepalived interface: {{ keepalived_interface_final }}"
+          - ""
+          - "Backend control plane nodes:"
+          - "  {{ control_plane_nodes | map(attribute='name') | join(', ') }}"
+          - ""
+          - "======================================================"
+

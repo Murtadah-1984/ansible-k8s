@@ -1,0 +1,14 @@
+- name: Kubernetes Node Bootstrap (Bare Metal)
+  hosts: k8s_nodes
+  become: true
+  gather_facts: true
+
+  roles:
+    - common
+    - hardening
+    - kernal
+    - containerd
+    - kubernetes
+    - images
+    - cleanup
+    - audit

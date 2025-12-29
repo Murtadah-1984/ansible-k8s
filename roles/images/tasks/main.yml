@@ -1,0 +1,9 @@
+- name: Get kubeadm images
+  command: kubeadm config images list
+  register: k8s_images
+
+- name: Pull Kubernetes images
+  command: crictl pull {{ item }}
+  loop: "{{ k8s_images.stdout_lines }}"
+  retries: 3
+  delay: 5

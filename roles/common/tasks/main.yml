@@ -1,0 +1,23 @@
+- name: Fail if not Ubuntu 24.04
+  assert:
+    that:
+      - ansible_distribution == "Ubuntu"
+      - ansible_distribution_version == "24.04"
+    fail_msg: "This role is optimized for Ubuntu 24.04 LTS"
+
+- name: Wait for cloud-init
+  command: cloud-init status --wait
+  changed_when: false
+  failed_when: false
+
+- name: Install uuid-runtime
+  apt:
+    name: uuid-runtime
+    state: present
+    update_cache: true
+
+- name: Install node uniqueness script
+  copy:
+    src: verify-node-uniqueness.sh
+    dest: /usr/local/bin/verify-node-uniqueness.sh
+    mode: "0755"

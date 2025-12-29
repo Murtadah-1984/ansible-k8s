@@ -1,0 +1,44 @@
+- name: Install containerd dependencies
+  apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+      - jq
+    state: present
+
+- name: Install containerd
+  apt:
+    name: containerd.io
+    state: present
+
+- name: Ensure containerd config directory exists
+  file:
+    path: /etc/containerd
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Configure containerd
+  template:
+    src: config.toml.j2
+    dest: /etc/containerd/config.toml
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart containerd
+
+# CIS-compliant containerd config file permissions
+- name: Set containerd config file permissions
+  file:
+    path: /etc/containerd/config.toml
+    mode: '0644'
+    owner: root
+    group: root
+
+- name: Enable containerd
+  systemd:
+    name: containerd
+    enabled: true
+    state: started
