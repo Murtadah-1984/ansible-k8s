@@ -37,17 +37,13 @@ node_bootstrap_serial: "50%"  # Serial execution percentage for node bootstrap
 # LOAD BALANCER CONFIGURATION
 # ============================================================================
 # Source: install-lb-services.yml
-# Control plane nodes for HAProxy backend
-control_plane_nodes:
-  - name: k8s-cp-01
-    ip: 10.0.20.11
-  - name: k8s-cp-02
-    ip: 10.0.20.12
-  - name: k8s-cp-03
-    ip: 10.0.20.13
+# Control plane nodes for HAProxy backend (dynamically built from inventory)
+# This builds a list of dicts with 'name' and 'ip' from the [control] group in inventory.ini
+# Note: This will be set dynamically in the playbook if not defined here
+control_plane_nodes: []
 
-# Keepalived configuration
-keepalived_virtual_ip: "10.0.20.10/32"
+# Keepalived configuration (set in inventory.ini)
+# keepalived_virtual_ip is defined in inventory.ini [all:vars] section
 keepalived_virtual_router_id: 51
 keepalived_auth_pass: "k8sHaSecret42"
 keepalived_interface: ""  # Will be auto-detected if not set (uses ansible_default_ipv4.interface)

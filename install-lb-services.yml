@@ -5,6 +5,13 @@
   gather_facts: true
 
   tasks:
+    - name: Build control_plane_nodes list from inventory
+      ansible.builtin.set_fact:
+        control_plane_nodes: "{{ control_plane_nodes | default([]) + [{'name': item, 'ip': hostvars[item]['ansible_host']}] }}"
+      loop: "{{ groups['control'] }}"
+      run_once: true
+      when: control_plane_nodes | default([]) | length == 0
+
     - name: Display installation information
       ansible.builtin.debug:
         msg:
@@ -281,9 +288,9 @@
 
               mode tcp
               balance     roundrobin
-              server k8s-cp-01 10.0.20.11:6443 check verify none
-              server k8s-cp-02 10.0.20.12:6443 check verify none
-              server k8s-cp-03 10.0.20.13:6443 check verify none
+{% for node in control_plane_nodes %}
+              server {{ node.name }} {{ node.ip }}:6443 check verify none
+{% endfor %}
         mode: '0644'
         owner: root
         group: root
