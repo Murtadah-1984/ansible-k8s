@@ -22,6 +22,76 @@
     state: absent
     purge: yes
 
+- name: Ensure proper hostname is set
+  hostname:
+    name: "{{ inventory_hostname }}"
+  register: hostname_result
+
+- name: Ensure /etc/hosts has proper entry (fixes domain resolution issues)
+  lineinfile:
+    path: /etc/hosts
+    regexp: '^127\.0\.0\.1\s+.*{{ inventory_hostname }}'
+    line: "127.0.0.1 localhost {{ inventory_hostname }}"
+    state: present
+  when: hostname_result.changed | default(false)
+
+- name: Configure postfix for local-only delivery (pre-configure before installation)
+  debconf:
+    name: postfix
+    question: "{{ item.question }}"
+    value: "{{ item.value }}"
+    vtype: "{{ item.vtype }}"
+  loop:
+    - { question: 'postfix/main_mailer_type', value: 'local', vtype: 'select' }
+    - { question: 'postfix/mailname', value: 'localhost.localdomain', vtype: 'string' }
+    - { question: 'postfix/root_address', value: '', vtype: 'string' }
+    - { question: 'postfix/destinations', value: 'localhost.localdomain, localhost', vtype: 'string' }
+  when: ansible_pkg_mgr == 'apt'
+  failed_when: false
+
+- name: Fix existing postfix configuration if present (before package installation)
+  block:
+    - name: Check if postfix configuration exists
+      stat:
+        path: /etc/postfix/main.cf
+      register: postfix_config_exists
+
+    - name: Fix postfix main.cf for local-only (remove invalid domain)
+      lineinfile:
+        path: /etc/postfix/main.cf
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        backup: true
+      loop:
+        - { regexp: '^myhostname\s*=', line: 'myhostname = localhost.localdomain' }
+        - { regexp: '^mydomain\s*=', line: 'mydomain = localdomain' }
+        - { regexp: '^mydestination\s*=', line: 'mydestination = localhost.localdomain, localhost' }
+        - { regexp: '^inet_interfaces\s*=', line: 'inet_interfaces = loopback-only' }
+      when: postfix_config_exists.stat.exists
+
+    - name: Remove any lines with invalid IP addresses in postfix config
+      lineinfile:
+        path: /etc/postfix/main.cf
+        regexp: '^mydomain\s*=\s*8\.8\.4\.4'
+        line: 'mydomain = localdomain'
+        state: present
+      when: postfix_config_exists.stat.exists
+
+    - name: Use sed to fix invalid domain in postfix config (more aggressive)
+      command: sed -i 's/^mydomain\s*=\s*8\.8\.4\.4/mydomain = localdomain/' /etc/postfix/main.cf
+      failed_when: false
+      changed_when: false
+      when: postfix_config_exists.stat.exists
+
+    - name: Fix /etc/mailname if it contains invalid domain
+      lineinfile:
+        path: /etc/mailname
+        line: 'localhost.localdomain'
+        regexp: '.*'
+        create: true
+      when: postfix_config_exists.stat.exists
+      failed_when: false
+
 - name: Install required security packages
   apt:
     name:
@@ -47,6 +117,85 @@
       - vlock
     state: present
     update_cache: true
+  register: apt_install_result
+  failed_when: false
+
+- name: Fix postfix configuration (always run after package installation)
+  block:
+    - name: Check if postfix configuration exists
+      stat:
+        path: /etc/postfix/main.cf
+      register: postfix_config
+
+    - name: Fix postfix main.cf for local-only
+      lineinfile:
+        path: /etc/postfix/main.cf
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        backup: true
+      loop:
+        - { regexp: '^myhostname\s*=', line: 'myhostname = localhost.localdomain' }
+        - { regexp: '^mydomain\s*=', line: 'mydomain = localdomain' }
+        - { regexp: '^mydestination\s*=', line: 'mydestination = localhost.localdomain, localhost' }
+        - { regexp: '^inet_interfaces\s*=', line: 'inet_interfaces = loopback-only' }
+      when: postfix_config.stat.exists
+
+    - name: Remove any lines with invalid IP addresses in postfix config (recovery)
+      lineinfile:
+        path: /etc/postfix/main.cf
+        regexp: '^mydomain\s*=\s*8\.8\.4\.4'
+        line: 'mydomain = localdomain'
+        state: present
+      when: postfix_config.stat.exists
+
+    - name: Use sed to fix invalid domain in postfix config (recovery, more aggressive)
+      command: sed -i 's/^mydomain\s*=\s*8\.8\.4\.4/mydomain = localdomain/' /etc/postfix/main.cf
+      failed_when: false
+      changed_when: false
+      when: postfix_config.stat.exists
+
+    - name: Use sed to fix any hostname with invalid IP domain
+      command: sed -i 's/\.8\.8\.4\.4$/.localdomain/' /etc/postfix/main.cf
+      failed_when: false
+      changed_when: false
+      when: postfix_config.stat.exists
+
+    - name: Fix /etc/mailname
+      lineinfile:
+        path: /etc/mailname
+        line: 'localhost.localdomain'
+        regexp: '.*'
+        create: true
+
+    - name: Force fix postfix domain using postconf (if postfix is installed)
+      command: postconf -e "mydomain=localdomain"
+      failed_when: false
+      changed_when: false
+      when: postfix_config.stat.exists
+
+    - name: Force fix postfix hostname using postconf (if postfix is installed)
+      command: postconf -e "myhostname=localhost.localdomain"
+      failed_when: false
+      changed_when: false
+      when: postfix_config.stat.exists
+
+    - name: Reconfigure failed packages
+      command: dpkg --configure -a
+      failed_when: false
+      changed_when: false
+      register: dpkg_reconfigure
+
+    - name: Verify postfix configuration
+      command: postconf mydomain
+      register: postfix_mydomain
+      changed_when: false
+      failed_when: false
+      when: postfix_config.stat.exists
+
+    - name: Display postfix domain status
+      debug:
+        msg: "Postfix mydomain: {{ postfix_mydomain.stdout | default('not set') }}"
+      when: postfix_mydomain.rc == 0
 
 - name: Enable and start rsyslog service (UBTU-24-100200)
   systemd:
@@ -99,6 +248,7 @@
   ufw:
     rule: allow
     port: "{{ item }}"
+    proto: tcp
   loop: "{{ kubernetes_ports | default(['10250', '10256', '30000:32767']) }}"
 
 - name: Configure AIDE to protect audit tools (UBTU-24-90890)
