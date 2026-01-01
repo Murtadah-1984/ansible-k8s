@@ -1,0 +1,52 @@
+---
+# Post-Tasks Verification
+# Verifies containerd is running after configuration
+
+# =============================================================================
+# POST-TASKS (verification and status)
+# =============================================================================
+- name: Wait for containerd to be ready after handler
+  wait_for:
+    path: /run/containerd/containerd.sock
+    state: present
+    timeout: 30
+  when: config_written.changed | default(false)
+
+- name: Verify containerd is running
+  systemd:
+    name: containerd
+  register: containerd_status
+
+- name: Display containerd status
+  debug:
+    msg:
+      - "Containerd service status: {{ 'RUNNING' if containerd_status.status.ActiveState == 'active' else 'NOT RUNNING' }}"
+      - "Config file: {{ containerd_config_path }}"
+      - "Backup location: {{ containerd_config_path }}.bak.{{ ansible_date_time.epoch }} (if backup was created)"
+
+- name: Restart kubelet service (if kubelet is installed)
+  systemd:
+    name: kubelet
+    state: restarted
+  register: kubelet_restart
+  failed_when: false
+  changed_when: kubelet_restart.changed
+
+- name: Display kubelet restart status
+  debug:
+    msg: "Kubelet service: {{ 'RESTARTED' if kubelet_restart.changed else 'NOT RESTARTED (may not be installed or already running)' }}"
+  when: kubelet_restart is defined
+
+- name: Display completion message
+  debug:
+    msg:
+      - ""
+      - "=== Containerd config regeneration completed ==="
+      - "Host: {{ inventory_hostname }}"
+      - "Config file: {{ containerd_config_path }}"
+      - "Config type: {{ 'MINIMAL (Kubernetes-ready)' if use_minimal_config else 'DEFAULT (from containerd config default)' }}"
+      - "SystemdCgroup: {{ 'SET' if set_systemd_cgroup else 'NOT SET' }}"
+      - "Sandbox image: {{ sandbox_image }}"
+      - "Containerd status: {{ 'RUNNING' if containerd_status.status.ActiveState == 'active' else 'CHECK MANUALLY' }}"
+      - ""
+

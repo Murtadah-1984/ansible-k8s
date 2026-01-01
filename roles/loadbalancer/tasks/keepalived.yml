@@ -1,0 +1,123 @@
+---
+# Keepalived Configuration
+# Configures Keepalived for high availability
+
+# =============================================================================
+# 2) CREATE KEEPALIVED HEALTH CHECK SCRIPT
+# =============================================================================
+- name: Ensure keepalived configuration directory exists
+  file:
+    path: /etc/keepalived
+    state: directory
+    mode: '0755'
+
+- name: Create Keepalived health check script
+  copy:
+    dest: /etc/keepalived/check_apiserver.sh
+    content: |
+      #!/bin/sh
+      APISERVER_DEST_PORT=8443
+      errorExit() {
+          echo "*** $*" 1>&2
+          exit 1
+      }
+      # Check API-server health through HAProxy on localhost:8443
+      curl -sfk --max-time 2 "https://localhost:${APISERVER_DEST_PORT}/healthz" -o /dev/null \
+        || errorExit "Error GET https://localhost:${APISERVER_DEST_PORT}/healthz"
+    mode: '0755'
+    owner: root
+    group: root
+
+# =============================================================================
+# 2.5) DETECT NETWORK INTERFACE AND DETERMINE KEEPALIVED ROLE
+# =============================================================================
+- name: Get default network interface
+  set_fact:
+    keepalived_interface_detected: "{{ ansible_default_ipv4.interface }}"
+  when: ansible_default_ipv4 is defined
+
+- name: Set network interface for Keepalived
+  set_fact:
+    keepalived_interface_final: "{{ keepalived_interface if keepalived_interface else keepalived_interface_detected }}"
+
+- name: Determine Keepalived role (MASTER for first node, BACKUP for others)
+  set_fact:
+    keepalived_role: "{{ 'MASTER' if groups['lb'][0] == inventory_hostname else 'BACKUP' }}"
+    keepalived_priority: "{{ 101 if groups['lb'][0] == inventory_hostname else 90 }}"
+
+- name: Display Keepalived configuration
+  debug:
+    msg:
+      - "Keepalived role: {{ keepalived_role }}"
+      - "Priority: {{ keepalived_priority }}"
+      - "Interface: {{ keepalived_interface_final }}"
+      - "Virtual IP: {{ keepalived_virtual_ip }}"
+
+# =============================================================================
+# 2.6) CREATE KEEPALIVED CONFIGURATION
+# =============================================================================
+- name: Check if Keepalived configuration exists
+  stat:
+    path: /etc/keepalived/keepalived.conf
+  register: keepalived_config_stat
+
+- name: Backup existing Keepalived configuration
+  copy:
+    src: /etc/keepalived/keepalived.conf
+    dest: /etc/keepalived/keepalived.conf.backup
+    remote_src: yes
+  when: keepalived_config_stat.stat.exists
+  failed_when: false
+
+- name: Create Keepalived configuration
+  copy:
+    dest: /etc/keepalived/keepalived.conf
+    content: |
+      ! /etc/keepalived/keepalived.conf
+      global_defs {
+          router_id K8S_CP_VRRP
+      }
+      vrrp_script check_apiserver {
+        script "/etc/keepalived/check_apiserver.sh"
+        interval 3
+        weight -2
+        fall 10
+        rise 2
+      }
+      vrrp_instance VI_1 {
+          state {{ keepalived_role }}
+          interface {{ keepalived_interface_final }}
+          virtual_router_id {{ keepalived_virtual_router_id }}
+          priority {{ keepalived_priority }}
+          authentication {
+              auth_type PASS
+              auth_pass {{ keepalived_auth_pass }}
+          }
+          virtual_ipaddress {
+              {{ keepalived_virtual_ip }}
+          }
+          track_script {
+              check_apiserver
+          }
+      {% if keepalived_role == 'MASTER' %}
+          nopreempt
+      {% endif %}
+      }
+    mode: '0644'
+    owner: root
+    group: root
+
+# =============================================================================
+# 3) VALIDATE KEEPALIVED CONFIGURATION
+# =============================================================================
+- name: Validate Keepalived configuration
+  command: keepalived -t -f /etc/keepalived/keepalived.conf
+  register: keepalived_validate
+  changed_when: false
+  failed_when: false
+
+- name: Display Keepalived validation result
+  debug:
+    msg: "{{ keepalived_validate.stdout_lines + keepalived_validate.stderr_lines }}"
+  when: keepalived_validate.stdout_lines is defined or keepalived_validate.stderr_lines is defined
+

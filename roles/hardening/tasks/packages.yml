@@ -1,0 +1,66 @@
+---
+# Package Removal and Installation
+# Removes prohibited packages and installs required security packages
+
+# ============================================================================
+# PACKAGE REMOVAL - PROHIBITED SERVICES
+# ============================================================================
+# Remove prohibited packages per CIS STIG requirements
+# UBTU-24-100030: Remove telnetd (CAT I)
+# UBTU-24-100040: Remove rsh-server (CAT I)
+# UBTU-24-100010: Remove systemd-timesyncd (replaced by chrony)
+# UBTU-24-100020: Remove ntp (replaced by chrony)
+
+- name: Remove prohibited packages (UBTU-24-100030, UBTU-24-100040)
+  apt:
+    name:
+      - telnetd
+      - rsh-server
+    state: absent
+    purge: yes
+
+- name: Remove systemd-timesyncd package (UBTU-24-100010)
+  apt:
+    name: systemd-timesyncd
+    state: absent
+    purge: yes
+
+- name: Remove ntp package (UBTU-24-100020)
+  apt:
+    name: ntp
+    state: absent
+    purge: yes
+
+# ============================================================================
+# PACKAGE INSTALLATION - SECURITY TOOLS
+# ============================================================================
+# Install required security packages for CIS STIG compliance
+
+- name: Install required security packages
+  apt:
+    name:
+      - ufw
+      - fail2ban
+      - unattended-upgrades
+      - auditd
+      - audispd-plugins
+      - libpam-pwquality
+      - aide
+      - aide-common
+      - apparmor
+      - apparmor-utils
+      - chrony
+      - openssh-server
+      - openssh-client
+      - rsyslog
+      - sssd
+      - libpam-sss
+      - libnss-sss
+      - opensc-pkcs11
+      - libpam-pkcs11
+      - vlock
+    state: present
+    update_cache: true
+  register: apt_install_result
+  failed_when: false
+

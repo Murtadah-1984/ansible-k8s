@@ -1,0 +1,28 @@
+---
+# Logrotate Configuration
+# Configures log rotation for Kubernetes nodes
+
+# ============================================================================
+# LOGROTATE CONFIGURATION
+# ============================================================================
+- name: Configure logrotate for Kubernetes nodes
+  copy:
+    dest: /etc/logrotate.d/k8s-node
+    content: |
+      /var/log/syslog
+      /var/log/kern.log
+      /var/log/auth.log
+      {
+          rotate 7
+          daily
+          compress
+          delaycompress
+          missingok
+          notifempty
+          create 0644 root root
+      }
+    mode: '0644'
+    owner: root
+    group: root
+  when: logrotate_enabled | default(true)
+

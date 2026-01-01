@@ -1,0 +1,51 @@
+---
+# Journald Configuration
+# Configures systemd journald for monitoring
+
+# ============================================================================
+# JOURNALD CONFIGURATION
+# ============================================================================
+- name: Configure journald for monitoring (upgrade-safe drop-in)
+  blockinfile:
+    path: /etc/systemd/journald.conf.d/99-k8s.conf
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - journald configuration"
+    block: |
+      [Journal]
+      # Storage mode: auto, persistent, volatile, none
+      Storage=auto
+      
+      # Maximum disk space for journal files
+      SystemMaxUse={{ journald_system_max_use }}
+      RuntimeMaxUse={{ journald_runtime_max_use }}
+      
+      # Compress old journal files
+      Compress=yes
+      
+      # Sync interval (write to disk)
+      SyncIntervalSec=5m
+      
+      # Rate limiting to prevent log spam
+      RateLimitInterval=30s
+      RateLimitBurst=5000
+      
+      # Maximum number of journal files to keep
+      MaxRetentionSec={{ journald_max_retention_sec }}
+      
+      # Forward to syslog
+      ForwardToSyslog=yes
+    create: true
+    mode: '0644'
+    owner: root
+    group: root
+  when: journald_enabled | default(true)
+  notify: restart systemd-journald
+
+- name: Ensure journald drop-in directory exists
+  file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+  when: journald_enabled | default(true)
+

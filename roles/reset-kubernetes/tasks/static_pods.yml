@@ -1,0 +1,51 @@
+---
+# Static Pods Graceful Shutdown
+# Gracefully stops static pods before reset
+
+# =============================================================================
+# 1) GRACEFUL SHUTDOWN OF STATIC PODS (per kubeadm documentation)
+# =============================================================================
+- name: Check for static pod manifests (control plane nodes)
+  ansible.builtin.find:
+    paths: /etc/kubernetes/manifests
+    patterns: "*.yaml,*.yml"
+    file_type: file
+  register: static_pod_manifests
+  failed_when: false
+
+- name: Check if yq is available for graceful shutdown
+  ansible.builtin.command:
+    cmd: which yq
+  register: yq_check
+  when: static_pod_manifests.files | length > 0
+  changed_when: false
+  failed_when: false
+
+- name: Gracefully stop static pods using yq (remove command array)
+  ansible.builtin.shell: |
+    for manifest in /etc/kubernetes/manifests/*.yaml /etc/kubernetes/manifests/*.yml; do
+      [ -f "$manifest" ] && yq eval -i '.spec.containers[0].command = []' "$manifest" || true
+    done
+  when: static_pod_manifests.files | length > 0 and yq_check.rc == 0
+  failed_when: false
+
+- name: Gracefully stop static pods by moving manifests (fallback)
+  ansible.builtin.shell: |
+    # Move manifests temporarily to stop pods gracefully
+    for manifest in /etc/kubernetes/manifests/*.yaml /etc/kubernetes/manifests/*.yml; do
+      [ -f "$manifest" ] && mv "$manifest" "/tmp/$(basename $manifest).backup" || true
+    done
+  when: static_pod_manifests.files | length > 0 and (yq_check.rc != 0 or yq_check is not defined)
+  failed_when: false
+
+- name: Wait for static pods to exit (up to 60 seconds)
+  ansible.builtin.shell: |
+    timeout 60 sh -c 'while pgrep -f "kube-apiserver|etcd|kube-controller-manager|kube-scheduler" >/dev/null; do sleep 1; done' || true
+  when: static_pod_manifests.files | length > 0
+  failed_when: false
+  register: static_pods_wait
+
+- name: Display static pods status
+  ansible.builtin.debug:
+    msg: "{{ 'Static pods gracefully stopped' if static_pod_manifests.files | length > 0 else 'No static pod manifests found (likely worker node)' }}"
+

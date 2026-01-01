@@ -1,0 +1,211 @@
+---
+# Containerd Sandbox Role - Main Entry Point
+# Orchestrates containerd sandbox image configuration
+
+# ============================================================================
+# PREREQUISITES
+# ============================================================================
+- name: Check prerequisites
+  include_tasks: prerequisites.yml
+
+# ============================================================================
+# BACKUP
+# ============================================================================
+- name: Backup existing configuration
+  include_tasks: backup.yml
+
+# ============================================================================
+# SANDBOX CONFIGURATION
+# ============================================================================
+- name: Configure sandbox image
+  include_tasks: sandbox_config.yml
+
+# ============================================================================
+# VALIDATION
+# ============================================================================
+- name: Validate configuration
+  include_tasks: validation.yml
+
+# ============================================================================
+# VERIFICATION
+# ============================================================================
+- name: Verify containerd and sandbox image
+  include_tasks: verification.yml
+  command: which containerd
+  register: containerd_check
+  changed_when: false
+  failed_when: false
+
+- name: Fail if containerd is not installed
+  fail:
+    msg: "containerd is not installed or not in PATH"
+  when: containerd_check.rc != 0
+
+- name: Check if containerd config file exists
+  stat:
+    path: "{{ containerd_config_path }}"
+  register: containerd_config_stat
+
+- name: Backup existing config file
+  copy:
+    src: "{{ containerd_config_path }}"
+    dest: "{{ containerd_config_path }}.bak.{{ ansible_date_time.epoch }}"
+    remote_src: true
+  when: containerd_config_stat.stat.exists
+  register: backup_result
+
+- name: Display backup information
+  debug:
+    msg: "Backed up existing config to {{ containerd_config_path }}.bak.{{ ansible_date_time.epoch }}"
+  when: containerd_config_stat.stat.exists and backup_result.changed
+
+- name: Generate default containerd config if missing
+  command: containerd config default
+  register: default_config_output
+  changed_when: true
+  when: not containerd_config_stat.stat.exists
+
+- name: Write default config to file if it was missing
+  copy:
+    content: "{{ default_config_output.stdout }}"
+    dest: "{{ containerd_config_path }}"
+    owner: root
+    group: root
+    mode: '0644'
+  when: not containerd_config_stat.stat.exists
+  notify: restart containerd
+
+- name: Ensure CRI plugin section exists
+  lineinfile:
+    path: "{{ containerd_config_path }}"
+    line: '  [plugins."io.containerd.grpc.v1.cri"]'
+    regexp: '^\s*\[plugins\."io\.containerd\.grpc\.v1\.cri"\]'
+    state: present
+    insertbefore: '^\[plugins\]'
+  register: cri_section_added
+  notify: restart containerd
+
+- name: Set sandbox image for Kubernetes
+  lineinfile:
+    path: "{{ containerd_config_path }}"
+    line: '    sandbox_image = "{{ sandbox_image }}"'
+    regexp: '^\s*sandbox_image\s*='
+    insertafter: '\[plugins\."io\.containerd\.grpc\.v1\.cri"\]'
+    state: present
+  register: sandbox_image_set
+  notify: restart containerd
+
+- name: Display sandbox image update status
+  debug:
+    msg: "Sandbox image {{ 'UPDATED' if sandbox_image_set.changed else 'ALREADY SET' }} to {{ sandbox_image }}"
+
+- name: Ensure containerd runtimes section exists
+  lineinfile:
+    path: "{{ containerd_config_path }}"
+    line: '      [plugins."io.containerd.grpc.v1.cri".containerd.runtimes]'
+    regexp: '^\s*\[plugins\."io\.containerd\.grpc\.v1\.cri"\.containerd\.runtimes\]'
+    state: present
+    insertafter: '\[plugins\."io\.containerd\.grpc\.v1\.cri"\.containerd\]'
+  register: runtimes_section_added
+
+- name: Ensure runc runtime section exists
+  lineinfile:
+    path: "{{ containerd_config_path }}"
+    line: '        [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]'
+    regexp: '^\s*\[plugins\."io\.containerd\.grpc\.v1\.cri"\.containerd\.runtimes\.runc\]'
+    state: present
+    insertafter: '\[plugins\."io\.containerd\.grpc\.v1\.cri"\.containerd\.runtimes\]'
+  register: runc_section_added
+
+- name: Ensure runc options section exists
+  lineinfile:
+    path: "{{ containerd_config_path }}"
+    line: '          [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]'
+    regexp: '^\s*\[plugins\."io\.containerd\.grpc\.v1\.cri"\.containerd\.runtimes\.runc\.options\]'
+    state: present
+    insertafter: '\[plugins\."io\.containerd\.grpc\.v1\.cri"\.containerd\.runtimes\.runc\]'
+  register: runc_options_section_added
+
+- name: Set SystemdCgroup = true for Kubernetes compatibility
+  replace:
+    path: "{{ containerd_config_path }}"
+    regexp: '(\[plugins\."io\.containerd\.grpc\.v1\.cri"\.containerd\.runtimes\.runc\.options\]\s+)(SystemdCgroup\s*=\s*)(false|true)'
+    replace: '\1\2true'
+  register: systemd_cgroup_set
+  notify: restart containerd
+
+- name: Ensure SystemdCgroup is set (add if missing)
+  blockinfile:
+    path: "{{ containerd_config_path }}"
+    block: |
+      SystemdCgroup = true
+    insertafter: '\[plugins\."io\.containerd\.grpc\.v1\.cri"\.containerd\.runtimes\.runc\.options\]'
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - SystemdCgroup"
+  when: systemd_cgroup_set.changed == false
+  register: systemd_cgroup_added
+  notify: restart containerd
+
+- name: Display SystemdCgroup update status
+  debug:
+    msg: "SystemdCgroup {{ 'SET' if (systemd_cgroup_set.changed or systemd_cgroup_added.changed) else 'ALREADY CONFIGURED' }}"
+
+- name: Validate TOML syntax (try tomllib - Python 3.11+)
+  command: python3 -c "import tomllib; tomllib.loads(open('{{ containerd_config_path }}', 'rb').read())"
+  register: toml_validation_py311
+  changed_when: false
+  failed_when: false
+
+- name: Validate TOML syntax (fallback to toml library)
+  command: python3 -c "import toml; toml.load('{{ containerd_config_path }}')"
+  register: toml_validation_toml
+  changed_when: false
+  failed_when: false
+  when: toml_validation_py311.rc != 0
+
+- name: Display TOML validation result
+  debug:
+    msg:
+      - "TOML syntax validation: {{ 'PASS' if (toml_validation_py311.rc == 0 or toml_validation_toml.rc == 0) else 'WARN - Could not validate (libraries may not be installed)' }}"
+      - "Note: Containerd will validate the config when it starts. If it starts successfully, the config is valid."
+
+- name: Wait for containerd to be ready after handler
+  wait_for:
+    path: /run/containerd/containerd.sock
+    state: present
+    timeout: 30
+  when: sandbox_image_set.changed | default(false) or systemd_cgroup_set.changed | default(false) or systemd_cgroup_added.changed | default(false)
+
+- name: Verify containerd is running
+  systemd:
+    name: containerd
+  register: containerd_status
+
+- name: Verify sandbox image is accessible
+  command: crictl pull {{ sandbox_image }}
+  register: sandbox_image_pull
+  changed_when: false
+  failed_when: false
+  when: "'crictl' in ansible_facts.get('packages', {})"
+
+- name: Display sandbox image verification
+  debug:
+    msg: "Sandbox image {{ sandbox_image }}: {{ 'ACCESSIBLE' if (sandbox_image_pull.rc == 0) else 'VERIFY MANUALLY (crictl may not be installed)' }}"
+  when: "'crictl' in ansible_facts.get('packages', {})"
+
+- name: Display completion message
+  debug:
+    msg:
+      - ""
+      - "=== Containerd Sandbox Image Fix Completed ==="
+      - "Host: {{ inventory_hostname }}"
+      - "Config file: {{ containerd_config_path }}"
+      - "Sandbox image: {{ sandbox_image }}"
+      - "SystemdCgroup: ENABLED"
+      - "Containerd status: {{ 'RUNNING' if containerd_status.status.ActiveState == 'active' else 'CHECK MANUALLY' }}"
+      - ""
+      - "Next steps:"
+      - "  1. Verify: sudo crictl pull {{ sandbox_image }}"
+      - "  2. Test: sudo kubeadm config images pull --kubernetes-version v{{ kubernetes_version }}"
+      - "  3. Retry: sudo kubeadm init (if applicable)"
+      - ""
+

@@ -1,0 +1,29 @@
+---
+# Join Verification
+# Verifies node join status
+
+# =============================================================================
+# Verification
+# =============================================================================
+- name: Check kubelet service status
+  ansible.builtin.systemd:
+    name: kubelet
+  register: final_kubelet_status
+  changed_when: false
+
+- name: Check if node config exists
+  ansible.builtin.stat:
+    path: /etc/kubernetes/kubelet.conf
+  register: final_kubelet_config
+  changed_when: false
+
+- name: Display join summary
+  ansible.builtin.debug:
+    msg:
+      - "======================================================"
+      - "Node {{ inventory_hostname }} join status:"
+      - "  Kubelet service: {{ final_kubelet_status.status.ActiveState }}"
+      - "  Kubelet config: {{ 'Present' if final_kubelet_config.stat.exists else 'Missing' }}"
+      - "  Status: {{ 'SUCCESS' if final_kubelet_config.stat.exists and final_kubelet_status.status.ActiveState == 'active' else 'CHECK REQUIRED' }}"
+      - "======================================================"
+

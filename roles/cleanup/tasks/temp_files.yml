@@ -1,0 +1,43 @@
+---
+# Temporary Files Cleanup
+# Removes old temporary files from /tmp and /var/tmp
+
+# ============================================================================
+# TEMPORARY FILES CLEANUP
+# ============================================================================
+- name: Find old temporary files
+  find:
+    paths: /tmp
+    age: "+1d"
+    file_type: file
+    recurse: false
+  register: old_tmp_files
+  failed_when: false
+
+- name: Remove old temporary files
+  file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ old_tmp_files.files | default([]) }}"
+  failed_when: false
+
+- name: Clean /var/tmp directory
+  file:
+    path: /var/tmp
+    state: directory
+  failed_when: false
+
+- name: Remove contents of /var/tmp
+  find:
+    paths: /var/tmp
+    file_type: any
+  register: var_tmp_files
+  failed_when: false
+
+- name: Remove /var/tmp files
+  file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ var_tmp_files.files | default([]) }}"
+  failed_when: false
+

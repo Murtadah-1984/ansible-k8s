@@ -1,0 +1,30 @@
+---
+# Containerd Installation
+# Installs containerd.io package and verifies installation
+
+# ============================================================================
+# CONTAINERD INSTALLATION
+# ============================================================================
+- name: Install containerd.io package
+  apt:
+    name: containerd.io
+    state: present
+    update_cache: false
+  when: containerd_check.rc != 0 or runc_check.rc != 0
+
+- name: Verify containerd installation
+  assert:
+    that:
+      - containerd_check.rc == 0 or (containerd_check.rc != 0 and ansible_check_mode == false)
+    fail_msg: "containerd binary not found after installation"
+    success_msg: "containerd verified"
+  when: not ansible_check_mode
+
+- name: Verify runc installation
+  assert:
+    that:
+      - runc_check.rc == 0 or (runc_check.rc != 0 and ansible_check_mode == false)
+    fail_msg: "runc binary not found after installation"
+    success_msg: "runc verified"
+  when: not ansible_check_mode
+

@@ -1,0 +1,33 @@
+---
+# Containerd Service Management
+# Enables and starts containerd service, verifies it's running
+
+# ============================================================================
+# SERVICE MANAGEMENT
+# ============================================================================
+- name: Enable and start containerd service
+  systemd:
+    name: containerd
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Wait for containerd socket
+  wait_for:
+    path: /run/containerd/containerd.sock
+    state: present
+    timeout: 30
+  register: containerd_socket_wait
+
+- name: Verify containerd is running
+  systemd:
+    name: containerd
+  register: containerd_status
+
+- name: Fail if containerd is not running
+  assert:
+    that:
+      - containerd_status.status.ActiveState == 'active'
+    fail_msg: "containerd service failed to start"
+    success_msg: "containerd service is running"
+

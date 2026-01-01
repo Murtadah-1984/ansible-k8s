@@ -1,0 +1,14 @@
+---
+# Default variables for pxe-common role
+
+# Base packages required for PXE server
+pxe_base_packages:
+  - dnsmasq
+  - syslinux-common
+  - pxelinux
+  - tftp-hpa
+  - nginx
+  - grub-efi-amd64-bin
+  - unzip
+  - wget
+

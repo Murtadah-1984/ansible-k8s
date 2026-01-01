@@ -1,0 +1,74 @@
+---
+# Restart Services Role - Main Entry Point
+# Orchestrates service restarts for containerd and kubelet
+
+# ============================================================================
+# CONTAINERD RESTART
+# ============================================================================
+- name: Restart containerd service
+  include_tasks: containerd.yml
+
+# ============================================================================
+# KUBELET RESTART
+# ============================================================================
+- name: Restart kubelet service
+  include_tasks: kubelet.yml
+
+# ============================================================================
+# SUMMARY
+# ============================================================================
+- name: Display service status summary
+  include_tasks: summary.yml
+  systemd:
+    name: containerd
+    state: restarted
+    enabled: yes
+  register: containerd_result
+
+- name: Wait for containerd to be running
+  systemd:
+    name: containerd
+    state: started
+  register: containerd_status
+  until: containerd_status.status.ActiveState == "active"
+  retries: 10
+  delay: 5
+  failed_when: false
+
+- name: Verify containerd is active
+  assert:
+    that:
+      - containerd_status.status.ActiveState == "active"
+    fail_msg: "containerd failed to start after restart"
+    success_msg: "containerd is running successfully"
+
+- name: Restart kubelet service
+  systemd:
+    name: kubelet
+    state: restarted
+    enabled: yes
+  register: kubelet_result
+
+- name: Wait for kubelet to be running
+  systemd:
+    name: kubelet
+    state: started
+  register: kubelet_status
+  until: kubelet_status.status.ActiveState == "active"
+  retries: 10
+  delay: 5
+  failed_when: false
+
+- name: Verify kubelet is active
+  assert:
+    that:
+      - kubelet_status.status.ActiveState == "active"
+    fail_msg: "kubelet failed to start after restart"
+    success_msg: "kubelet is running successfully"
+
+- name: Display service status
+  debug:
+    msg:
+      - "containerd status: {{ containerd_status.status.ActiveState }}"
+      - "kubelet status: {{ kubelet_status.status.ActiveState }}"
+

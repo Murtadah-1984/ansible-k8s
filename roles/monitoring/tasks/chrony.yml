@@ -1,0 +1,41 @@
+---
+# Chrony Time Synchronization
+# Configures chrony for time synchronization
+
+# ============================================================================
+# CHRONY (TIME SYNCHRONIZATION)
+# ============================================================================
+- name: Install chrony package
+  apt:
+    name: chrony
+    state: present
+    update_cache: true
+  when: chrony_enabled | default(true)
+
+- name: Ensure chrony configuration directory exists
+  file:
+    path: /etc/chrony
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+  when: chrony_enabled | default(true)
+
+- name: Configure chrony
+  template:
+    src: chrony.conf.j2
+    dest: /etc/chrony/chrony.conf
+    owner: root
+    group: root
+    mode: '0644'
+  when: chrony_enabled | default(true)
+  notify: restart chrony
+
+- name: Enable and start chrony service
+  systemd:
+    name: chrony
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: chrony_enabled | default(true)
+

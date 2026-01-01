@@ -1,0 +1,48 @@
+---
+# CNI Cleanup
+# Removes CNI configuration and network artifacts
+
+# =============================================================================
+# 4) CNI CLEANUP (per docs + safe extensions)
+# =============================================================================
+- name: Remove CNI configuration directory
+  ansible.builtin.file:
+    path: /etc/cni/net.d
+    state: absent
+  failed_when: false
+
+- name: Remove CNI binaries directory
+  ansible.builtin.file:
+    path: /opt/cni/bin
+    state: absent
+  failed_when: false
+
+- name: Clean CNI runtime artifacts (Calico / Cilium / Flannel)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /var/lib/calico
+    - /var/lib/cni
+    - /var/run/calico
+    - /var/run/cilium
+    - /var/lib/cilium
+    - /sys/fs/bpf/tc
+  failed_when: false
+
+- name: Clean Cilium BPF artifacts
+  ansible.builtin.shell: |
+    rm -rf /sys/fs/bpf/cilium* 2>/dev/null || true
+  failed_when: false
+
+- name: Delete network interfaces left by CNIs
+  ansible.builtin.command:
+    cmd: "ip link delete {{ item }}"
+  loop:
+    - cni0
+    - flannel.1
+    - tunl0
+    - vxlan.calico
+  failed_when: false
+  ignore_errors: true
+

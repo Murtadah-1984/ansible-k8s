@@ -1,0 +1,71 @@
+---
+# Configuration Generation
+# Generates and deploys containerd configuration
+
+- name: Generate default containerd config
+  command: containerd config default
+  register: default_config_output
+  changed_when: true
+  when: not use_minimal_config | default(false)
+
+- name: Write default config to file
+  copy:
+    content: "{{ default_config_output.stdout }}"
+    dest: "{{ containerd_config_path }}"
+    owner: root
+    group: root
+    mode: '0644'
+  register: config_written
+  when: not use_minimal_config | default(false)
+  notify: restart containerd
+
+- name: Deploy minimal Kubernetes-ready config
+  template:
+    src: config-minimal.toml.j2
+    dest: "{{ containerd_config_path }}"
+    owner: root
+    group: root
+    mode: '0644'
+  register: config_written
+  when: use_minimal_config | default(false)
+  notify: restart containerd
+
+- name: Verify config file was created
+  stat:
+    path: "{{ containerd_config_path }}"
+  register: new_config_stat
+
+- name: Fail if config file was not created
+  fail:
+    msg: "Failed to create containerd config file"
+  when: not new_config_stat.stat.exists
+
+- name: Set SystemdCgroup = true for Kubernetes compatibility
+  replace:
+    path: "{{ containerd_config_path }}"
+    regexp: '(\[plugins\."io\.containerd\.grpc\.v1\.cri"\.containerd\.runtimes\.runc\.options\]\s+)(SystemdCgroup\s*=\s*)(false|true)'
+    replace: '\1\2true'
+  when: set_systemd_cgroup | default(true) and not use_minimal_config | default(false)
+  register: systemd_cgroup_set
+  notify: restart containerd
+
+- name: Ensure SystemdCgroup is set (add if missing)
+  blockinfile:
+    path: "{{ containerd_config_path }}"
+    block: |
+      SystemdCgroup = true
+    insertafter: '\[plugins\."io\.containerd\.grpc\.v1\.cri"\.containerd\.runtimes\.runc\.options\]'
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - SystemdCgroup"
+  when: set_systemd_cgroup | default(true) and not use_minimal_config | default(false) and systemd_cgroup_set.changed == false
+  notify: restart containerd
+
+- name: Set sandbox image for Kubernetes
+  lineinfile:
+    path: "{{ containerd_config_path }}"
+    line: '    sandbox_image = "{{ sandbox_image }}"'
+    regexp: '^\s*sandbox_image\s*='
+    insertafter: '\[plugins\."io\.containerd\.grpc\.v1\.cri"\]'
+  register: sandbox_image_set
+  when: not use_minimal_config | default(false)
+  notify: restart containerd
+

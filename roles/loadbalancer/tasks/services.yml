@@ -1,0 +1,29 @@
+---
+# Service Management
+# Enables and starts HAProxy and Keepalived services
+
+# =============================================================================
+# 6) ENABLE AND START SERVICES
+# =============================================================================
+- name: Enable HAProxy service
+  systemd:
+    name: haproxy
+    enabled: yes
+
+- name: Start HAProxy service
+  systemd:
+    name: haproxy
+    state: started
+    daemon_reload: yes
+
+- name: Enable Keepalived service
+  systemd:
+    name: keepalived
+    enabled: yes
+
+- name: Start Keepalived service
+  systemd:
+    name: keepalived
+    state: started
+    daemon_reload: yes
+

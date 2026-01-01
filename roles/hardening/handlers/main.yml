@@ -1,4 +1,7 @@
-- name: Restart SSH
-  service:
+---
+# Handlers for CIS Ubuntu 24.04 LTS STIG Hardening Role
+
+- name: restart_ssh
+  systemd:
     name: ssh
     state: restarted

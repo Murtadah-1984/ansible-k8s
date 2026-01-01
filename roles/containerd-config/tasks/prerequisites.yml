@@ -1,0 +1,20 @@
+---
+# Prerequisites Check
+# Verifies containerd is installed
+
+- name: Check if containerd is installed
+  command: which containerd
+  register: containerd_check
+  changed_when: false
+  failed_when: false
+
+- name: Fail if containerd is not installed
+  fail:
+    msg: "containerd is not installed or not in PATH"
+  when: containerd_check.rc != 0
+
+- name: Check if containerd config file exists
+  stat:
+    path: "{{ containerd_config_path }}"
+  register: containerd_config_stat
+

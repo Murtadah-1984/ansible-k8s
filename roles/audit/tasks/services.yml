@@ -1,0 +1,97 @@
+---
+# Service Status Audit Checks
+# Verifies required services are active and unnecessary services are disabled
+
+- name: Firewall (UFW) status (UBTU-24-100310, UBTU-24-100310)
+  ansible.builtin.command: ufw status verbose
+  register: ufw_status
+  changed_when: false
+  failed_when: false
+
+- name: UFW checks
+  ansible.builtin.debug:
+    msg:
+      - "{{ 'PASS: UFW installed' if ufw_status.rc == 0 else 'FAIL: ufw not installed or not usable' }}"
+      - "{{ 'PASS: UFW active' if (ufw_status.stdout is search('Status: active')) else 'FAIL: UFW not active' }}"
+      - "{{ 'PASS: Default incoming deny' if (ufw_status.stdout is search('Default: deny \\(incoming\\)')) else 'WARN: Default incoming not deny' }}"
+
+- name: Service status checks
+  ansible.builtin.command: systemctl is-active {{ item }}
+  loop:
+    - rsyslog
+    - auditd
+    - apparmor
+    - chronyd
+    - ssh
+    - ufw
+  register: service_status
+  changed_when: false
+  failed_when: false
+
+- name: Service status results
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'PASS: ' ~ item.item ~ ' is active' 
+         if (item.stdout | trim == 'active')
+         else 'FAIL: ' ~ item.item ~ ' is not active (' ~ (item.stdout | trim | default('unknown')) ~ ')' }}
+  loop: "{{ service_status.results }}"
+
+- name: Service disabled checks (snapd, bluetooth, avahi)
+  ansible.builtin.command: "systemctl is-enabled {{ item }}"
+  loop:
+    - snapd.service
+    - bluetooth.service
+    - avahi-daemon.service
+  register: svc_enabled
+  changed_when: false
+  failed_when: false
+
+- name: Service results output
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'PASS: ' ~ item.item ~ ' is ' ~ item.stdout
+         if (item.rc == 0 and (item.stdout | trim) in ['disabled','masked'])
+         else ('WARN: ' ~ item.item ~ ' is ' ~ (item.stdout | trim | default('not-installed/unknown'))) }}
+  loop: "{{ svc_enabled.results }}"
+
+- name: Auditd checks
+  ansible.builtin.command: auditctl -l
+  register: audit_rules
+  changed_when: false
+  failed_when: false
+
+- name: Auditd service state
+  ansible.builtin.command: systemctl is-active auditd
+  register: auditd_state
+  changed_when: false
+  failed_when: false
+
+- name: Auditd output
+  ansible.builtin.debug:
+    msg:
+      - "{{ 'FAIL: auditd not installed (auditctl missing)' if audit_rules.rc != 0 else 'PASS: auditctl available' }}"
+      - "{{ 'PASS: auditd active' if (auditd_state.stdout | trim) == 'active' else 'FAIL: auditd not active' }}"
+      - "{{ 'PASS: audit rules present' if (audit_rules.stdout | trim) != '' else 'WARN: no audit rules configured' }}"
+
+- name: Time synchronization check
+  ansible.builtin.command: systemctl is-active chronyd
+  register: chronyd_state
+  changed_when: false
+  failed_when: false
+
+- name: Time sync output
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'PASS: chronyd active' if (chronyd_state.stdout | trim) == 'active'
+         else ('FAIL: chronyd state=' ~ (chronyd_state.stdout | trim)) }}
+
+- name: Check AppArmor status (UBTU-24-100510)
+  ansible.builtin.command: systemctl is-active apparmor
+  register: apparmor_active
+  changed_when: false
+  failed_when: false
+
+- name: AppArmor result
+  ansible.builtin.debug:
+    msg: "{{ 'PASS: AppArmor is active' if (apparmor_active.stdout | trim) == 'active' else 'FAIL: AppArmor is not active' }}"
+

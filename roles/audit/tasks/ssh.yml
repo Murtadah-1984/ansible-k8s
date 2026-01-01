@@ -1,0 +1,24 @@
+---
+# SSH Configuration Audit Checks
+# Verifies SSH hardening settings
+
+- name: SSH hardening checks (read sshd_config)
+  ansible.builtin.slurp:
+    src: /etc/ssh/sshd_config
+  register: sshd_cfg
+  failed_when: false
+
+- name: SSH checks output
+  ansible.builtin.debug:
+    msg:
+      - "{{ 'FAIL: /etc/ssh/sshd_config missing' if (sshd_cfg is failed) else 'PASS: sshd_config exists' }}"
+      - "{{ 'PASS: PermitRootLogin no' if (sshd_cfg.content | b64decode is search('(?im)^\\s*PermitRootLogin\\s+no\\s*$')) else 'FAIL: PermitRootLogin not no' }}"
+      - "{{ 'PASS: PermitEmptyPasswords no' if (sshd_cfg.content | b64decode is search('(?im)^\\s*PermitEmptyPasswords\\s+no\\s*$')) else 'FAIL: PermitEmptyPasswords not no' }}"
+      - "{{ 'PASS: X11Forwarding no' if (sshd_cfg.content | b64decode is search('(?im)^\\s*X11Forwarding\\s+no\\s*$')) else 'WARN: X11Forwarding not explicitly no' }}"
+      - "{{ 'PASS: AllowTcpForwarding no' if (sshd_cfg.content | b64decode is search('(?im)^\\s*AllowTcpForwarding\\s+no\\s*$')) else 'WARN: AllowTcpForwarding not no' }}"
+      - "{{ 'PASS: ClientAliveInterval 300' if (sshd_cfg.content | b64decode is search('(?im)^\\s*ClientAliveInterval\\s+300\\s*$')) else 'WARN: ClientAliveInterval not 300' }}"
+      - "{{ 'PASS: ClientAliveCountMax 2' if (sshd_cfg.content | b64decode is search('(?im)^\\s*ClientAliveCountMax\\s+2\\s*$')) else 'WARN: ClientAliveCountMax not 2' }}"
+      - "{{ 'PASS: FIPS Ciphers configured' if (sshd_cfg.content | b64decode is search('(?im)^\\s*Ciphers\\s+aes256-gcm@openssh\\.com')) else 'FAIL: FIPS Ciphers not configured' }}"
+      - "{{ 'PASS: FIPS MACs configured' if (sshd_cfg.content | b64decode is search('(?im)^\\s*MACs\\s+hmac-sha2-512-etm@openssh\\.com')) else 'FAIL: FIPS MACs not configured' }}"
+      - "{{ 'PASS: FIPS KexAlgorithms configured' if (sshd_cfg.content | b64decode is search('(?im)^\\s*KexAlgorithms\\s+ecdh-sha2-nistp521')) else 'FAIL: FIPS KexAlgorithms not configured' }}"
+

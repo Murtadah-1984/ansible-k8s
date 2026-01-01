@@ -1,0 +1,28 @@
+---
+# Containerd Service Restart
+# Restarts and verifies containerd service
+
+- name: Restart containerd service
+  systemd:
+    name: containerd
+    state: restarted
+    enabled: yes
+  register: containerd_result
+
+- name: Wait for containerd to be running
+  systemd:
+    name: containerd
+    state: started
+  register: containerd_status
+  until: containerd_status.status.ActiveState == "active"
+  retries: 10
+  delay: 5
+  failed_when: false
+
+- name: Verify containerd is active
+  assert:
+    that:
+      - containerd_status.status.ActiveState == "active"
+    fail_msg: "containerd failed to start after restart"
+    success_msg: "containerd is running successfully"
+

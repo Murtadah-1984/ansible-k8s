@@ -1,0 +1,28 @@
+---
+# Default variables for monitoring role
+
+# Node Exporter configuration
+node_exporter_version: "1.10.2"
+node_exporter_enabled: true
+
+# Fluent Bit configuration
+fluent_bit_version: "4.2.0"
+fluent_bit_enabled: true
+loki_host: "loki.default.svc"
+loki_port: 3100
+
+# Chrony (time synchronization) configuration
+chrony_enabled: true
+chrony_ntp_pools:
+  - "time.cloudflare.com iburst"
+  - "pool.ntp.org iburst"
+
+# Journald configuration
+journald_enabled: true
+journald_system_max_use: "100M"
+journald_runtime_max_use: "50M"
+journald_max_retention_sec: "1month"
+
+# Logrotate configuration
+logrotate_enabled: true
+

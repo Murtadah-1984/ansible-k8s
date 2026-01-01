@@ -1,0 +1,35 @@
+---
+# Boot Security Configuration
+# Configures GRUB bootloader security per CIS STIG requirements
+
+# ============================================================================
+# BOOT SECURITY CONFIGURATION
+# ============================================================================
+# Configure GRUB bootloader security per CIS STIG requirements
+# UBTU-24-102000: GRUB boot password requirement
+# UBTU-24-102010: Enable audit at system startup
+
+- name: Configure GRUB boot password requirement (UBTU-24-102000)
+  blockinfile:
+    path: /etc/grub.d/40_custom
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - GRUB Password"
+    block: |
+      set superusers="root"
+      password_pbkdf2 root {{ grub_password_hash | default('CHANGE_ME') }}
+    create: true
+  when: grub_password_hash is defined and grub_password_hash != 'CHANGE_ME'
+
+- name: Configure GRUB to enable audit at startup (UBTU-24-102010)
+  lineinfile:
+    path: /etc/default/grub
+    regexp: '^GRUB_CMDLINE_LINUX='
+    line: 'GRUB_CMDLINE_LINUX="audit=1"'
+    backup: true
+
+- name: Update GRUB configuration after changes
+  command: update-grub
+  changed_when: true
+  when: 
+    - grub_password_hash is defined
+    - grub_password_hash != 'CHANGE_ME'
+

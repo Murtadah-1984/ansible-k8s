@@ -1,0 +1,23 @@
+---
+# Configuration Validation
+# Validates TOML syntax
+
+- name: Validate TOML syntax (try tomllib - Python 3.11+)
+  command: python3 -c "import tomllib; tomllib.loads(open('{{ containerd_config_path }}', 'rb').read())"
+  register: toml_validation_py311
+  changed_when: false
+  failed_when: false
+
+- name: Validate TOML syntax (fallback to toml library)
+  command: python3 -c "import toml; toml.load('{{ containerd_config_path }}')"
+  register: toml_validation_toml
+  changed_when: false
+  failed_when: false
+  when: toml_validation_py311.rc != 0
+
+- name: Display TOML validation result
+  debug:
+    msg:
+      - "TOML syntax validation: {{ 'PASS' if (toml_validation_py311.rc == 0 or toml_validation_toml.rc == 0) else 'WARN - Could not validate (libraries may not be installed)' }}"
+      - "Note: Containerd will validate the config when it starts. If it starts successfully, the config is valid."
+

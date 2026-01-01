@@ -1,0 +1,8 @@
+---
+# Default variables for loadbalancer role
+
+keepalived_interface: ""
+keepalived_virtual_ip: ""
+keepalived_virtual_router_id: 51
+keepalived_auth_pass: "K8S_CP_VRRP_PASS"
+

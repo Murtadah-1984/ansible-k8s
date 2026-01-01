@@ -1,0 +1,25 @@
+---
+# Kubeadm Reset
+# Executes kubeadm reset command
+
+# =============================================================================
+# 3) KUBEADM RESET (core action, per official docs)
+# =============================================================================
+- name: Check if kubeadm is installed
+  ansible.builtin.command:
+    cmd: which kubeadm
+  register: kubeadm_check
+  changed_when: false
+  failed_when: false
+
+- name: Run kubeadm reset
+  ansible.builtin.command:
+    cmd: kubeadm reset -f
+  when: kubeadm_check.rc == 0
+  failed_when: false
+  register: kubeadm_reset_result
+
+- name: Display kubeadm reset status
+  ansible.builtin.debug:
+    msg: "{{ 'kubeadm reset completed' if kubeadm_check.rc == 0 else 'kubeadm not found, skipping reset' }}"
+

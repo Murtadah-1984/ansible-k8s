@@ -1,0 +1,9 @@
+---
+# Install base packages for PXE server
+
+- name: Install base packages
+  apt:
+    name: "{{ pxe_base_packages }}"
+    state: present
+    update_cache: true
+

@@ -1,0 +1,8 @@
+---
+# Default variables for scan-kubelet role
+
+kubelet_config_path: /var/lib/kubelet/config.yaml
+check_duplicates: true
+check_yaml_syntax: true
+check_permissions: true
+

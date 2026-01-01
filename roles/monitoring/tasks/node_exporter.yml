@@ -1,0 +1,93 @@
+---
+# Node Exporter Configuration
+# Installs and configures Prometheus node_exporter
+
+# ============================================================================
+# NODE EXPORTER (PROMETHEUS METRICS)
+# ============================================================================
+- name: Check if node_exporter user exists
+  getent:
+    database: passwd
+    key: node_exporter
+  register: node_exporter_user
+  failed_when: false
+  changed_when: false
+  when: node_exporter_enabled | default(true)
+
+- name: Create node_exporter user
+  user:
+    name: node_exporter
+    system: true
+    shell: /usr/sbin/nologin
+    home: /nonexistent
+    create_home: false
+  when:
+    - node_exporter_enabled | default(true)
+    - node_exporter_user.ansible_facts.getent_passwd.node_exporter is not defined
+
+- name: Check if node_exporter binary exists
+  stat:
+    path: /usr/local/bin/node_exporter
+  register: node_exporter_binary
+  when: node_exporter_enabled | default(true)
+
+- name: Download node_exporter
+  get_url:
+    url: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
+    dest: /tmp/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz
+    mode: '0644'
+  when:
+    - node_exporter_enabled | default(true)
+    - not node_exporter_binary.stat.exists
+
+- name: Extract node_exporter
+  unarchive:
+    src: /tmp/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz
+    dest: /tmp
+    remote_src: true
+  when:
+    - node_exporter_enabled | default(true)
+    - not node_exporter_binary.stat.exists
+
+- name: Install node_exporter binary
+  copy:
+    src: /tmp/node_exporter-{{ node_exporter_version }}.linux-amd64/node_exporter
+    dest: /usr/local/bin/node_exporter
+    mode: '0755'
+    owner: node_exporter
+    group: node_exporter
+    remote_src: true
+  when:
+    - node_exporter_enabled | default(true)
+    - not node_exporter_binary.stat.exists
+  notify: restart node_exporter
+
+- name: Clean up node_exporter temporary files
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /tmp/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz
+    - /tmp/node_exporter-{{ node_exporter_version }}.linux-amd64
+  when:
+    - node_exporter_enabled | default(true)
+    - not node_exporter_binary.stat.exists
+
+- name: Configure node_exporter systemd service
+  template:
+    src: node_exporter.service.j2
+    dest: /etc/systemd/system/node_exporter.service
+    mode: '0644'
+    owner: root
+    group: root
+  when: node_exporter_enabled | default(true)
+  notify: restart node_exporter
+
+- name: Enable and start node_exporter service
+  systemd:
+    name: node_exporter
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: node_exporter_enabled | default(true)
+

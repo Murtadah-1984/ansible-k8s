@@ -1,0 +1,68 @@
+---
+# Sysctl Network Security Audit Checks
+# Verifies network security parameters
+
+- name: Swap check
+  ansible.builtin.command: swapon --show
+  register: swap_out
+  changed_when: false
+
+- name: Swap result
+  ansible.builtin.debug:
+    msg: "{{ 'PASS: No active swap devices' if (swap_out.stdout | trim) == '' else 'WARN: Swap is enabled' }}"
+
+- name: Sysctl checks
+  ansible.builtin.command: "sysctl -n {{ item.key }}"
+  loop:
+    - { key: 'net.ipv4.conf.all.rp_filter' }
+    - { key: 'net.ipv4.conf.default.rp_filter' }
+    - { key: 'net.ipv4.conf.all.accept_redirects' }
+    - { key: 'net.ipv4.conf.default.accept_redirects' }
+    - { key: 'net.ipv4.conf.all.secure_redirects' }
+    - { key: 'net.ipv4.conf.default.secure_redirects' }
+    - { key: 'net.ipv6.conf.all.accept_redirects' }
+    - { key: 'net.ipv6.conf.default.accept_redirects' }
+    - { key: 'net.ipv4.conf.all.send_redirects' }
+    - { key: 'net.ipv4.conf.default.send_redirects' }
+    - { key: 'net.ipv4.conf.all.log_martians' }
+    - { key: 'net.ipv4.conf.default.log_martians' }
+    - { key: 'net.ipv4.icmp_echo_ignore_broadcasts' }
+    - { key: 'net.ipv4.tcp_syncookies' }
+    - { key: 'net.ipv4.conf.all.accept_source_route' }
+    - { key: 'net.ipv4.conf.default.accept_source_route' }
+    - { key: 'net.ipv6.conf.all.accept_source_route' }
+    - { key: 'net.ipv6.conf.default.accept_source_route' }
+  register: sysctl_results
+  changed_when: false
+  failed_when: false
+
+- name: Expected sysctl values
+  set_fact:
+    expected_sysctl:
+      net.ipv4.conf.all.rp_filter: "1"
+      net.ipv4.conf.default.rp_filter: "1"
+      net.ipv4.conf.all.accept_redirects: "0"
+      net.ipv4.conf.default.accept_redirects: "0"
+      net.ipv4.conf.all.secure_redirects: "0"
+      net.ipv4.conf.default.secure_redirects: "0"
+      net.ipv6.conf.all.accept_redirects: "0"
+      net.ipv6.conf.default.accept_redirects: "0"
+      net.ipv4.conf.all.send_redirects: "0"
+      net.ipv4.conf.default.send_redirects: "0"
+      net.ipv4.conf.all.log_martians: "1"
+      net.ipv4.conf.default.log_martians: "1"
+      net.ipv4.icmp_echo_ignore_broadcasts: "1"
+      net.ipv4.tcp_syncookies: "1"
+      net.ipv4.conf.all.accept_source_route: "0"
+      net.ipv4.conf.default.accept_source_route: "0"
+      net.ipv6.conf.all.accept_source_route: "0"
+      net.ipv6.conf.default.accept_source_route: "0"
+
+- name: Sysctl results output
+  ansible.builtin.debug:
+    msg: >-
+      {{ ('PASS: ' ~ item.item.key ~ ' = ' ~ (item.stdout | trim))
+         if ((item.stdout | trim) == (expected_sysctl[item.item.key]))
+         else ('FAIL: ' ~ item.item.key ~ ' = ' ~ (item.stdout | trim) ~ ' (expected ' ~ expected_sysctl[item.item.key] ~ ')') }}
+  loop: "{{ sysctl_results.results }}"
+

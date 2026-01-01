@@ -1,0 +1,170 @@
+---
+# Fluent Bit Configuration
+# Installs and configures Fluent Bit for log shipping to Loki
+
+# ============================================================================
+# FLUENT BIT (LOG SHIPPING)
+# ============================================================================
+- name: Clean up old Fluent Bit repository files
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/apt/sources.list.d/fluentbit.list
+    - /etc/apt/sources.list.d/fluent-bit.list
+  failed_when: false
+  when: fluent_bit_enabled | default(true)
+
+- name: Install Fluent Bit prerequisites
+  apt:
+    name:
+      - gpg
+      - lsb-release
+    state: present
+    update_cache: false
+  when:
+    - fluent_bit_enabled | default(true)
+    - not fluent_bit_repo_configured | default(false)
+
+- name: Get OS codename for Fluent Bit repository
+  set_fact:
+    os_codename: "{{ ansible_facts.get('lsb', {}).get('codename', 'jammy') | default('jammy') }}"
+  when:
+    - fluent_bit_enabled | default(true)
+    - not fluent_bit_repo_stat.stat.exists
+
+- name: Detect OS type for Fluent Bit repository
+  set_fact:
+    repo_path: "{{ 'ubuntu' if ansible_facts.get('distribution') == 'Ubuntu' else 'debian' }}"
+  when:
+    - fluent_bit_enabled | default(true)
+    - not fluent_bit_repo_stat.stat.exists
+
+- name: Download Fluent Bit GPG key
+  get_url:
+    url: https://packages.fluentbit.io/fluentbit.key
+    dest: /tmp/fluentbit.key
+    mode: '0644'
+  when:
+    - fluent_bit_enabled | default(true)
+    - not fluent_bit_repo_stat.stat.exists
+
+- name: Add Fluent Bit GPG key to keyring
+  command: gpg --dearmor < /tmp/fluentbit.key > /usr/share/keyrings/fluentbit-keyring.gpg
+  args:
+    creates: /usr/share/keyrings/fluentbit-keyring.gpg
+  when:
+    - fluent_bit_enabled | default(true)
+    - not fluent_bit_repo_stat.stat.exists
+
+- name: Create Fluent Bit repository file
+  copy:
+    dest: /etc/apt/sources.list.d/fluent-bit.list
+    content: "deb [signed-by=/usr/share/keyrings/fluentbit-keyring.gpg] https://packages.fluentbit.io/{{ repo_path }}/{{ os_codename }} {{ os_codename }} main\n"
+    mode: '0644'
+    owner: root
+    group: root
+  when:
+    - fluent_bit_enabled | default(true)
+    - not fluent_bit_repo_stat.stat.exists
+
+- name: Clean up Fluent Bit temporary key file
+  file:
+    path: /tmp/fluentbit.key
+    state: absent
+  when: fluent_bit_enabled | default(true)
+
+- name: Update APT cache for Fluent Bit
+  apt:
+    update_cache: true
+    cache_valid_time: 3600
+  when:
+    - fluent_bit_enabled | default(true)
+    - not fluent_bit_repo_stat.stat.exists
+
+- name: Install Fluent Bit package
+  apt:
+    name: fluent-bit
+    state: present
+    update_cache: false
+  when: fluent_bit_enabled | default(true)
+
+- name: Find fluent-bit binary location
+  find:
+    paths:
+      - /usr/bin
+      - /opt/fluent-bit/bin
+      - /usr/local/bin
+    patterns:
+      - fluent-bit
+    file_type: file
+  register: fluent_bit_binary
+  when: fluent_bit_enabled | default(true)
+
+- name: Create symlink for fluent-bit if needed
+  file:
+    src: "{{ fluent_bit_binary.files[0].path if fluent_bit_binary.files | length > 0 else '/opt/fluent-bit/bin/fluent-bit' }}"
+    dest: /usr/bin/fluent-bit
+    state: link
+  when:
+    - fluent_bit_enabled | default(true)
+    - fluent_bit_binary.files | length > 0
+    - fluent_bit_binary.files[0].path != '/usr/bin/fluent-bit'
+
+- name: Set fluent_bit_bin fact
+  set_fact:
+    fluent_bit_bin: "{{ fluent_bit_binary.files[0].path if fluent_bit_binary.files | length > 0 else '/usr/bin/fluent-bit' }}"
+  when: fluent_bit_enabled | default(true)
+
+- name: Ensure Fluent Bit configuration directory exists
+  file:
+    path: /etc/fluent-bit
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+  when: fluent_bit_enabled | default(true)
+
+- name: Configure Fluent Bit
+  template:
+    src: fluent-bit.conf.j2
+    dest: /etc/fluent-bit/fluent-bit.conf
+    owner: root
+    group: root
+    mode: '0644'
+  when: fluent_bit_enabled | default(true)
+  notify: restart fluent-bit
+
+- name: Configure Fluent Bit parsers
+  copy:
+    dest: /etc/fluent-bit/parsers.conf
+    content: |
+      [PARSER]
+          Name        docker
+          Format      json
+          Time_Key    time
+          Time_Format %Y-%m-%dT%H:%M:%S.%L
+    mode: '0644'
+    owner: root
+    group: root
+  when: fluent_bit_enabled | default(true)
+  notify: restart fluent-bit
+
+- name: Configure Fluent Bit systemd service
+  template:
+    src: fluent-bit.service.j2
+    dest: /etc/systemd/system/fluent-bit.service
+    mode: '0644'
+    owner: root
+    group: root
+  when: fluent_bit_enabled | default(true)
+  notify: restart fluent-bit
+
+- name: Enable and start Fluent Bit service
+  systemd:
+    name: fluent-bit
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: fluent_bit_enabled | default(true)
+

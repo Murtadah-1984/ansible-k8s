@@ -1,0 +1,75 @@
+---
+# CRI Tools (crictl) Installation
+# Installs and configures crictl for container runtime interface
+
+# ============================================================================
+# CRICTL INSTALLATION
+# ============================================================================
+- name: Check if crictl is installed
+  command: which crictl
+  register: crictl_check
+  changed_when: false
+  failed_when: false
+
+- name: Check for crictl in common locations
+  stat:
+    path: "{{ item }}"
+  loop:
+    - /usr/local/bin/crictl
+    - /usr/bin/crictl
+  register: crictl_locations
+  failed_when: false
+
+- name: Download crictl
+  get_url:
+    url: "https://github.com/kubernetes-sigs/cri-tools/releases/download/{{ crictl_version | default('v1.34.0') }}/crictl-{{ crictl_version | default('v1.34.0') }}-linux-amd64.tar.gz"
+    dest: /tmp/crictl.tar.gz
+    mode: '0644'
+  when:
+    - crictl_check.rc != 0
+    - crictl_locations.results | selectattr('stat.exists') | list | length == 0
+
+- name: Extract crictl
+  unarchive:
+    src: /tmp/crictl.tar.gz
+    dest: /usr/local/bin
+    remote_src: true
+    creates: /usr/local/bin/crictl
+  when:
+    - crictl_check.rc != 0
+    - crictl_locations.results | selectattr('stat.exists') | list | length == 0
+
+- name: Set crictl permissions
+  file:
+    path: /usr/local/bin/crictl
+    mode: '0755'
+    owner: root
+    group: root
+  when:
+    - crictl_check.rc != 0
+    - crictl_locations.results | selectattr('stat.exists') | list | length == 0
+
+- name: Clean up crictl temporary file
+  file:
+    path: /tmp/crictl.tar.gz
+    state: absent
+
+- name: Check if crictl config exists
+  stat:
+    path: /etc/crictl.yaml
+  register: crictl_config_stat
+  failed_when: false
+
+- name: Configure crictl to use containerd socket
+  copy:
+    dest: /etc/crictl.yaml
+    content: |
+      runtime-endpoint: unix:///run/containerd/containerd.sock
+      image-endpoint: unix:///run/containerd/containerd.sock
+      timeout: 10
+      debug: false
+    mode: '0644'
+    owner: root
+    group: root
+  when: not crictl_config_stat.stat.exists
+

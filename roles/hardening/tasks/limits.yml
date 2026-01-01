@@ -1,0 +1,27 @@
+---
+# System Limits and Session Management
+# Configures system limits and session timeouts per CIS STIG requirements
+
+# ============================================================================
+# SYSTEM LIMITS AND SESSION MANAGEMENT
+# ============================================================================
+# Configure system limits and session timeouts per CIS STIG requirements
+# UBTU-24-200000: Limit concurrent sessions
+# UBTU-24-200060: Configure session timeout
+
+- name: Configure system limits - maxlogins (UBTU-24-200000)
+  lineinfile:
+    path: /etc/security/limits.conf
+    regexp: '^\*\s+hard\s+maxlogins'
+    line: '* hard maxlogins 10'
+    create: true
+
+- name: Configure session timeout (UBTU-24-200060)
+  copy:
+    dest: /etc/profile.d/99-terminal_tmout.sh
+    content: |
+      # CIS STIG UBTU-24-200060: Configure session timeout
+      TMOUT=600
+      export TMOUT
+    mode: '0644'
+

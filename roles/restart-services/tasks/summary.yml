@@ -1,0 +1,10 @@
+---
+# Service Status Summary
+# Displays final status of all services
+
+- name: Display service status
+  debug:
+    msg:
+      - "containerd status: {{ containerd_status.status.ActiveState }}"
+      - "kubelet status: {{ kubelet_status.status.ActiveState }}"
+

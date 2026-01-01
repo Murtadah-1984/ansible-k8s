@@ -1,0 +1,94 @@
+---
+# Sandbox Image Configuration
+# Configures containerd sandbox image and SystemdCgroup
+
+- name: Generate default containerd config if missing
+  command: containerd config default
+  register: default_config_output
+  changed_when: true
+  when: not containerd_config_stat.stat.exists
+
+- name: Write default config to file if it was missing
+  copy:
+    content: "{{ default_config_output.stdout }}"
+    dest: "{{ containerd_config_path }}"
+    owner: root
+    group: root
+    mode: '0644'
+  when: not containerd_config_stat.stat.exists
+  notify: restart containerd
+
+- name: Ensure CRI plugin section exists
+  lineinfile:
+    path: "{{ containerd_config_path }}"
+    line: '  [plugins."io.containerd.grpc.v1.cri"]'
+    regexp: '^\s*\[plugins\."io\.containerd\.grpc\.v1\.cri"\]'
+    state: present
+    insertbefore: '^\[plugins\]'
+  register: cri_section_added
+  notify: restart containerd
+
+- name: Set sandbox image for Kubernetes
+  lineinfile:
+    path: "{{ containerd_config_path }}"
+    line: '    sandbox_image = "{{ sandbox_image }}"'
+    regexp: '^\s*sandbox_image\s*='
+    insertafter: '\[plugins\."io\.containerd\.grpc\.v1\.cri"\]'
+    state: present
+  register: sandbox_image_set
+  notify: restart containerd
+
+- name: Display sandbox image update status
+  debug:
+    msg: "Sandbox image {{ 'UPDATED' if sandbox_image_set.changed else 'ALREADY SET' }} to {{ sandbox_image }}"
+
+- name: Ensure containerd runtimes section exists
+  lineinfile:
+    path: "{{ containerd_config_path }}"
+    line: '      [plugins."io.containerd.grpc.v1.cri".containerd.runtimes]'
+    regexp: '^\s*\[plugins\."io\.containerd\.grpc\.v1\.cri"\.containerd\.runtimes\]'
+    state: present
+    insertafter: '\[plugins\."io\.containerd\.grpc\.v1\.cri"\.containerd\]'
+  register: runtimes_section_added
+
+- name: Ensure runc runtime section exists
+  lineinfile:
+    path: "{{ containerd_config_path }}"
+    line: '        [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]'
+    regexp: '^\s*\[plugins\."io\.containerd\.grpc\.v1\.cri"\.containerd\.runtimes\.runc\]'
+    state: present
+    insertafter: '\[plugins\."io\.containerd\.grpc\.v1\.cri"\.containerd\.runtimes\]'
+  register: runc_section_added
+
+- name: Ensure runc options section exists
+  lineinfile:
+    path: "{{ containerd_config_path }}"
+    line: '          [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]'
+    regexp: '^\s*\[plugins\."io\.containerd\.grpc\.v1\.cri"\.containerd\.runtimes\.runc\.options\]'
+    state: present
+    insertafter: '\[plugins\."io\.containerd\.grpc\.v1\.cri"\.containerd\.runtimes\.runc\]'
+  register: runc_options_section_added
+
+- name: Set SystemdCgroup = true for Kubernetes compatibility
+  replace:
+    path: "{{ containerd_config_path }}"
+    regexp: '(\[plugins\."io\.containerd\.grpc\.v1\.cri"\.containerd\.runtimes\.runc\.options\]\s+)(SystemdCgroup\s*=\s*)(false|true)'
+    replace: '\1\2true'
+  register: systemd_cgroup_set
+  notify: restart containerd
+
+- name: Ensure SystemdCgroup is set (add if missing)
+  blockinfile:
+    path: "{{ containerd_config_path }}"
+    block: |
+      SystemdCgroup = true
+    insertafter: '\[plugins\."io\.containerd\.grpc\.v1\.cri"\.containerd\.runtimes\.runc\.options\]'
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - SystemdCgroup"
+  when: systemd_cgroup_set.changed == false
+  register: systemd_cgroup_added
+  notify: restart containerd
+
+- name: Display SystemdCgroup update status
+  debug:
+    msg: "SystemdCgroup {{ 'SET' if (systemd_cgroup_set.changed or systemd_cgroup_added.changed) else 'ALREADY CONFIGURED' }}"
+

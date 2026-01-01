@@ -1,63 +1,7 @@
+# Exact copy from k8s.sh script (lines 1336-1342)
 apiVersion: kubelet.config.k8s.io/v1beta1
 kind: KubeletConfiguration
-# CIS 4.2.1 - Disable anonymous authentication
-authentication:
-  anonymous:
-    enabled: false
-  x509:
-    clientCAFile: "{{ kubelet_client_ca_file | default('/etc/kubernetes/pki/ca.crt') }}"
-
-# CIS 4.2.2 - Use Webhook authorization (not AlwaysAllow)
-authorization:
-  mode: Webhook
-
-# CIS 4.2.4 - Disable read-only port
-readOnlyPort: 0
-
-# CIS 4.2.5 - Set streaming connection idle timeout (not 0)
-streamingConnectionIdleTimeout: "{{ kubelet_streaming_connection_idle_timeout | default('5m') }}"
-
-# CIS 4.2.6 - Enable iptables management
-makeIPTablesUtilChains: true
-
-# CIS 4.2.9 - TLS configuration (if certificates are provided)
-{% if kubelet_tls_cert_file is defined and kubelet_tls_private_key_file is defined %}
-tlsCertFile: "{{ kubelet_tls_cert_file }}"
-tlsPrivateKeyFile: "{{ kubelet_tls_private_key_file }}"
-{% endif %}
-
-# CIS 4.2.10 - Enable certificate rotation
-rotateCertificates: true
-
-# CIS 4.2.11 - Enable server certificate rotation via TLS bootstrap
-serverTLSBootstrap: true
-
-# CIS 4.2.12 - Strong Cryptographic Ciphers (TLS cipher suites)
-# Note: This is configured via TLS cipher suites in kubelet service file
-# The kubelet uses Go's default cipher suites which are FIPS-compliant
-# Additional cipher configuration should be done at the service level
-
-# CIS 4.2.13 - Pod PIDs limit (default if not specified)
-{% if kubelet_pod_pids_limit is defined %}
-podPidsLimit: {{ kubelet_pod_pids_limit }}
-{% else %}
-podPidsLimit: 4096
-{% endif %}
-
-# Additional security settings
 cgroupDriver: systemd
-failSwapOn: true
-
-# Event recording (CIS 4.2.8 - Level 2)
-eventRecordQPS: {{ kubelet_event_record_qps | default(5) }}
-
-# Cluster configuration
-clusterDomain: "{{ kubelet_cluster_domain | default('cluster.local') }}"
-clusterDNS:
-  - "{{ kubelet_cluster_dns | default('10.96.0.10') }}"
-
-# Resource limits
-{% if kubelet_pod_pids_limit is defined %}
-podPidsLimit: {{ kubelet_pod_pids_limit }}
-{% endif %}
+containerRuntimeEndpoint: unix:///var/run/containerd/containerd.sock
+staticPodPath: /etc/kubernetes/manifests
 

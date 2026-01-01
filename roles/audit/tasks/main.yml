@@ -1,8 +1,42 @@
 ---
 # CIS Ubuntu 24.04 LTS STIG Compliance Audit
-# Checks compliance with CIS Ubuntu Linux 24.04 LTS STIG Benchmark v1.0.0
+# Main entry point for compliance checking
 
-- name: OS Version Check
+# ============================================================================
+# OS VERSION CHECK
+# ============================================================================
+- name: Check OS version
+  include_tasks: os_check.yml
+
+# ============================================================================
+# PACKAGE AUDIT
+# ============================================================================
+- name: Audit packages
+  include_tasks: packages.yml
+
+# ============================================================================
+# SERVICE AUDIT
+# ============================================================================
+- name: Audit services
+  include_tasks: services.yml
+
+# ============================================================================
+# SSH CONFIGURATION AUDIT
+# ============================================================================
+- name: Audit SSH configuration
+  include_tasks: ssh.yml
+
+# ============================================================================
+# NETWORK SECURITY AUDIT
+# ============================================================================
+- name: Audit network security (sysctl)
+  include_tasks: sysctl.yml
+
+# ============================================================================
+# COMPLIANCE CHECKS
+# ============================================================================
+- name: Run additional compliance checks
+  include_tasks: compliance.yml
   ansible.builtin.debug:
     msg: "Detected: {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }} ({{ ansible_facts['distribution_release'] }})"
 

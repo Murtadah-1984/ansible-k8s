@@ -1,0 +1,84 @@
+---
+# Download and extract Ubuntu netboot files
+
+- name: Check if Ubuntu kernel and initrd already exist
+  stat:
+    path: "{{ tftp_root }}/ubuntu/{{ item }}"
+  register: ubuntu_files
+  loop:
+    - vmlinuz
+    - initrd
+  changed_when: false
+
+- name: Check if all Ubuntu files exist
+  set_fact:
+    ubuntu_files_exist: "{{ ubuntu_files.results | selectattr('stat.exists') | list | length == 2 }}"
+
+- name: Download Ubuntu ISO
+  get_url:
+    url: "{{ ubuntu_iso_url }}"
+    dest: "{{ ubuntu_iso_dest }}"
+    mode: '0644'
+  when: not ubuntu_files_exist
+  register: iso_download
+
+- name: Create mount point
+  file:
+    path: "{{ iso_mount_point }}"
+    state: directory
+    mode: '0755'
+  when: not ubuntu_files_exist
+
+- name: Mount ISO
+  mount:
+    path: "{{ iso_mount_point }}"
+    src: "{{ ubuntu_iso_dest }}"
+    fstype: iso9660
+    state: mounted
+    opts: loop,ro
+  when: not ubuntu_files_exist
+
+- name: Ensure Ubuntu directory exists
+  file:
+    path: "{{ tftp_root }}/ubuntu"
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+  when: not ubuntu_files_exist
+
+- name: Copy kernel and initrd
+  copy:
+    src: "/mnt/casper/{{ item }}"
+    dest: "{{ tftp_root }}/ubuntu/{{ item }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - vmlinuz
+    - initrd
+  when: not ubuntu_files_exist
+
+- name: Unmount ISO
+  mount:
+    path: "{{ iso_mount_point }}"
+    state: unmounted
+  when: not ubuntu_files_exist
+  failed_when: false
+
+- name: Remove ISO file (optional cleanup)
+  file:
+    path: "{{ ubuntu_iso_dest }}"
+    state: absent
+  when: not ubuntu_files_exist and iso_download.changed
+  failed_when: false
+
+- name: Display status
+  debug:
+    msg:
+      - "Ubuntu netboot files status:"
+      - "  vmlinuz: {{ 'EXISTS' if ubuntu_files.results[0].stat.exists else 'MISSING' }}"
+      - "  initrd: {{ 'EXISTS' if ubuntu_files.results[1].stat.exists else 'MISSING' }}"
+      - "  Location: {{ tftp_root }}/ubuntu/"
+

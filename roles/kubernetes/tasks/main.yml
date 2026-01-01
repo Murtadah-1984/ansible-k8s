@@ -1,5 +1,42 @@
-# Pre-flight checks for Kubernetes installation
-- name: Verify swap is disabled (CIS requirement)
+---
+# Kubernetes Role - Main Entry Point
+# Orchestrates Kubernetes installation and configuration
+
+# ============================================================================
+# PRE-FLIGHT CHECKS
+# ============================================================================
+- name: Run pre-flight checks
+  include_tasks: preflight.yml
+
+# ============================================================================
+# REPOSITORY SETUP
+# ============================================================================
+- name: Setup Kubernetes repository
+  include_tasks: repository.yml
+
+# ============================================================================
+# PACKAGE INSTALLATION
+# ============================================================================
+- name: Install Kubernetes packages
+  include_tasks: installation.yml
+
+# ============================================================================
+# CRICTL INSTALLATION
+# ============================================================================
+- name: Install and configure crictl
+  include_tasks: crictl.yml
+
+# ============================================================================
+# KUBELET CONFIGURATION
+# ============================================================================
+- name: Configure kubelet
+  include_tasks: kubelet.yml
+
+# ============================================================================
+# CIS COMPLIANCE
+# ============================================================================
+- name: Apply CIS compliance settings
+  include_tasks: cis_compliance.yml
   command: swapon --show
   register: swap_status
   changed_when: false
@@ -22,17 +59,45 @@
   debug:
     msg: "WARNING: Required kernel modules (overlay, br_netfilter) may not be loaded. Ensure kernal role runs before kubernetes role."
 
-- name: Aggressively remove all Kubernetes repository entries (fix conflicts)
-  shell: |
-    # Remove all Kubernetes repository files
-    rm -f /etc/apt/sources.list.d/*kubernetes* /etc/apt/sources.list.d/*k8s* 2>/dev/null || true
-    
-    # Remove Kubernetes repository lines from sources.list
-    sed -i '/pkgs\.k8s\.io/d' /etc/apt/sources.list 2>/dev/null || true
-    
-    # Remove any lines containing kubernetes or k8s from all sources.list.d files
-    find /etc/apt/sources.list.d -type f -exec sed -i '/pkgs\.k8s\.io/d' {} \; 2>/dev/null || true
+- name: Find Kubernetes repository files to remove
+  find:
+    paths: /etc/apt/sources.list.d
+    patterns:
+      - "*kubernetes*"
+      - "*k8s*"
+    file_type: file
+  register: k8s_repo_files
+  failed_when: false
   changed_when: false
+
+- name: Remove Kubernetes repository files
+  file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ k8s_repo_files.files | default([]) }}"
+  failed_when: false
+
+- name: Remove Kubernetes repository lines from sources.list
+  lineinfile:
+    path: /etc/apt/sources.list
+    regexp: 'pkgs\.k8s\.io'
+    state: absent
+  failed_when: false
+
+- name: Find all files in sources.list.d that might contain Kubernetes repos
+  find:
+    paths: /etc/apt/sources.list.d
+    file_type: file
+  register: sources_list_d_files
+  failed_when: false
+  changed_when: false
+
+- name: Remove Kubernetes repository lines from sources.list.d files
+  lineinfile:
+    path: "{{ item.path }}"
+    regexp: 'pkgs\.k8s\.io'
+    state: absent
+  loop: "{{ sources_list_d_files.files | default([]) }}"
   failed_when: false
 
 - name: Verify no Kubernetes repository entries remain
@@ -48,8 +113,9 @@
   when: k8s_repo_check.stdout != "No entries found" and k8s_repo_check.stdout != ""
 
 - name: Clear APT cache after cleanup
-  command: apt-get clean
-  changed_when: false
+  apt:
+    update_cache: false
+    cache_valid_time: 0
   failed_when: false
 
 - name: Ensure apt keyring directory exists
@@ -141,20 +207,130 @@
     group: root
 
 - name: Update APT cache after repository addition
-  command: apt-get update
-  changed_when: false
+  apt:
+    update_cache: true
+    cache_valid_time: 3600
 
-- name: Install Kubernetes components
+- name: Auto-detect exact Kubernetes version from repository
+  block:
+    - name: Get Kubernetes minor version
+      set_fact:
+        k8s_minor_version: "{{ kubernetes_version | regex_replace('^(\\d+\\.\\d+).*', '\\1') }}"
+        k8s_repo_version: "v{{ kubernetes_version | regex_replace('^(\\d+\\.\\d+).*', '\\1') }}"
+
+    - name: Check if version is minor or full
+      set_fact:
+        is_minor_version: "{{ kubernetes_version is match('^\\d+\\.\\d+$') }}"
+
+    - name: Get available versions from repository
+      command: apt-cache madison kubeadm
+      register: kubeadm_versions
+      changed_when: false
+
+    - name: Extract matching version for minor version
+      set_fact:
+        available_version: "{{ (kubeadm_versions.stdout_lines | select('match', '.*' + kubernetes_version + '\\.') | map('regex_replace', '.*\\s+(\\S+).*', '\\1') | list | first) | default('') }}"
+      when: is_minor_version | bool
+
+    - name: Extract exact matching version for full version
+      set_fact:
+        available_version: "{{ (kubeadm_versions.stdout_lines | select('match', '.*' + kubernetes_version) | map('regex_replace', '.*\\s+(\\S+).*', '\\1') | list | first) | default('') }}"
+      when: not (is_minor_version | bool)
+
+    - name: Fail if version not found
+      fail:
+        msg: "Kubernetes version {{ kubernetes_version }} not found in repository. Available versions: {{ kubeadm_versions.stdout_lines[:5] | join(', ') }}"
+      when: available_version == '' or available_version is not defined
+
+    - name: Store pure version for image preloading
+      set_fact:
+        k8s_pure_version: "{{ available_version | regex_replace('^(\\d+\\.\\d+\\.\\d+).*', '\\1') }}"
+
+- name: Install Kubernetes components with detected version
   apt:
     name:
-      - kubelet
-      - kubeadm
-      - kubectl
+      - "kubectl={{ available_version }}"
+      - "kubelet={{ available_version }}"
+      - "kubeadm={{ available_version }}"
     state: present
+    update_cache: false
+  when: available_version is defined and available_version != ''
 
 - name: Hold Kubernetes packages
   command: apt-mark hold kubelet kubeadm kubectl
   changed_when: false
+  failed_when: false
+
+# ============================================================================
+# CRICTL INSTALLATION
+# ============================================================================
+- name: Check if crictl is installed
+  command: which crictl
+  register: crictl_check
+  changed_when: false
+  failed_when: false
+
+- name: Check for crictl in common locations
+  stat:
+    path: "{{ item }}"
+  loop:
+    - /usr/local/bin/crictl
+    - /usr/bin/crictl
+  register: crictl_locations
+  failed_when: false
+
+- name: Download crictl
+  get_url:
+    url: "https://github.com/kubernetes-sigs/cri-tools/releases/download/{{ crictl_version | default('v1.34.0') }}/crictl-{{ crictl_version | default('v1.34.0') }}-linux-amd64.tar.gz"
+    dest: /tmp/crictl.tar.gz
+    mode: '0644'
+  when:
+    - crictl_check.rc != 0
+    - crictl_locations.results | selectattr('stat.exists') | list | length == 0
+
+- name: Extract crictl
+  unarchive:
+    src: /tmp/crictl.tar.gz
+    dest: /usr/local/bin
+    remote_src: true
+    creates: /usr/local/bin/crictl
+  when:
+    - crictl_check.rc != 0
+    - crictl_locations.results | selectattr('stat.exists') | list | length == 0
+
+- name: Set crictl permissions
+  file:
+    path: /usr/local/bin/crictl
+    mode: '0755'
+    owner: root
+    group: root
+  when:
+    - crictl_check.rc != 0
+    - crictl_locations.results | selectattr('stat.exists') | list | length == 0
+
+- name: Clean up crictl temporary file
+  file:
+    path: /tmp/crictl.tar.gz
+    state: absent
+
+- name: Check if crictl config exists
+  stat:
+    path: /etc/crictl.yaml
+  register: crictl_config_stat
+  failed_when: false
+
+- name: Configure crictl to use containerd socket
+  copy:
+    dest: /etc/crictl.yaml
+    content: |
+      runtime-endpoint: unix:///run/containerd/containerd.sock
+      image-endpoint: unix:///run/containerd/containerd.sock
+      timeout: 10
+      debug: false
+    mode: '0644'
+    owner: root
+    group: root
+  when: not crictl_config_stat.stat.exists
 
 - name: Ensure kubelet config directory exists
   file:
@@ -163,6 +339,23 @@
     owner: root
     group: root
     mode: '0755'
+
+- name: Configure kubelet extra args
+  copy:
+    dest: /etc/default/kubelet
+    content: |
+      KUBELET_EXTRA_ARGS=--container-runtime-endpoint=unix:///run/containerd/containerd.sock --cgroup-driver=systemd
+    mode: '0644'
+    owner: root
+    group: root
+
+- name: Ensure Kubernetes manifests directory exists
+  file:
+    path: /etc/kubernetes/manifests
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
 
 - name: Configure kubelet
   template:
@@ -289,3 +482,12 @@
     group: root
   loop: "{{ cni_config_files.files | default([]) }}"
   when: cni_config_files.files is defined and cni_config_files.files | length > 0
+
+# ============================================================================
+# KUBELET SERVICE ENABLEMENT
+# ============================================================================
+- name: Enable kubelet service
+  systemd:
+    name: kubelet
+    enabled: true
+    daemon_reload: true

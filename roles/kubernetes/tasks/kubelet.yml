@@ -1,0 +1,57 @@
+---
+# Kubelet Configuration
+# Configures kubelet service and CIS-compliant settings
+
+- name: Ensure kubelet config directory exists
+  file:
+    path: /var/lib/kubelet
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Configure kubelet extra args
+  copy:
+    dest: /etc/default/kubelet
+    content: |
+      KUBELET_EXTRA_ARGS=--container-runtime-endpoint=unix:///run/containerd/containerd.sock --cgroup-driver=systemd
+    mode: '0644'
+    owner: root
+    group: root
+
+- name: Ensure Kubernetes manifests directory exists
+  file:
+    path: /etc/kubernetes/manifests
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Configure kubelet
+  template:
+    src: kubelet-config.yaml.j2
+    dest: /var/lib/kubelet/config.yaml
+    owner: root
+    group: root
+    mode: '0600'
+  notify: restart kubelet
+
+# CIS 4.1.9 & 4.1.10 - Ensure kubelet config.yaml permissions and ownership
+# Note: Permissions and ownership are already set in the template task above
+# This task ensures they remain correct even if file is modified elsewhere
+- name: Verify kubelet config.yaml permissions and ownership (CIS 4.1.9, 4.1.10)
+  file:
+    path: /var/lib/kubelet/config.yaml
+    mode: '0600'
+    owner: root
+    group: root
+
+# ============================================================================
+# KUBELET SERVICE ENABLEMENT
+# ============================================================================
+- name: Enable kubelet service
+  systemd:
+    name: kubelet
+    enabled: true
+    daemon_reload: true
+

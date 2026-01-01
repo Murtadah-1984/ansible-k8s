@@ -1,0 +1,73 @@
+---
+# Scan Containerd Configurations for Misconfigurations
+# Simplified version - full scan functionality available in original playbook
+
+- name: Check if containerd config file exists
+  stat:
+    path: "{{ containerd_config_path }}"
+  register: containerd_config_stat
+  failed_when: false
+
+- name: Display scan header
+  debug:
+    msg: "=== Scanning containerd config on {{ inventory_hostname }} ==="
+  when: containerd_config_stat.stat.exists
+
+- name: Fail if containerd config file does not exist
+  fail:
+    msg: "Containerd config file not found at {{ containerd_config_path }}"
+  when: not containerd_config_stat.stat.exists
+
+- name: Check file permissions and ownership
+  stat:
+    path: "{{ containerd_config_path }}"
+  register: containerd_config_perms
+  when: check_permissions | default(true)
+
+- name: Report permission issues
+  debug:
+    msg:
+      - "PERMISSION CHECK:"
+      - "  Path: {{ containerd_config_path }}"
+      - "  Mode: {{ '%04o' | format(containerd_config_perms.stat.mode | int) }}"
+      - "  Owner: {{ containerd_config_perms.stat.pw_name }}"
+      - "  Group: {{ containerd_config_perms.stat.gr_name }}"
+      - "  Expected Mode: 0644"
+      - "  Expected Owner: root"
+      - "  Expected Group: root"
+      - "  Status: {{ 'PASS' if (containerd_config_perms.stat.mode | int) == 33188 and containerd_config_perms.stat.pw_name == 'root' and containerd_config_perms.stat.gr_name == 'root' else 'FAIL' }}"
+  when: check_permissions | default(true)
+
+- name: Validate TOML syntax using Python
+  command: python3 -c "import tomllib; tomllib.loads(open('{{ containerd_config_path }}', 'rb').read())"
+  register: toml_validation_py311
+  changed_when: false
+  failed_when: false
+  when: check_toml_syntax | default(true)
+
+- name: Validate TOML syntax using toml library (fallback)
+  command: python3 -c "import toml; toml.load('{{ containerd_config_path }}')"
+  register: toml_validation_toml
+  changed_when: false
+  failed_when: false
+  when: check_toml_syntax | default(true) and toml_validation_py311.rc != 0
+
+- name: Report TOML syntax errors
+  debug:
+    msg:
+      - "TOML SYNTAX CHECK:"
+      - "  Status: {{ 'FAIL' if (toml_validation_py311.rc != 0 and toml_validation_toml.rc != 0) else 'PASS' }}"
+      - "  Error (tomllib): {{ toml_validation_py311.stderr if toml_validation_py311.rc != 0 else 'No errors' }}"
+      - "  Error (toml): {{ toml_validation_toml.stderr if toml_validation_toml.rc != 0 and toml_validation_py311.rc != 0 else 'N/A' }}"
+  when: check_toml_syntax | default(true)
+
+- name: Display summary
+  debug:
+    msg:
+      - ""
+      - "=== SCAN SUMMARY FOR {{ inventory_hostname }} ==="
+      - "Config file exists: {{ containerd_config_stat.stat.exists }}"
+      - "TOML syntax valid: {{ 'PASS' if (toml_validation_py311.rc == 0 or toml_validation_toml.rc == 0) else 'FAIL' }}"
+      - "Permissions correct: {{ 'PASS' if (containerd_config_perms.stat.mode | int) == 33188 and containerd_config_perms.stat.pw_name == 'root' and containerd_config_perms.stat.gr_name == 'root' else 'FAIL' }}"
+      - ""
+

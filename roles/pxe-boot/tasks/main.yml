@@ -1,0 +1,19 @@
+---
+# Deploy PXE boot menu configuration
+
+- name: Ensure pxelinux.cfg directory exists
+  file:
+    path: "{{ tftp_root }}/pxelinux.cfg"
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Deploy PXE menu
+  template:
+    src: pxelinux.cfg.j2
+    dest: "{{ tftp_root }}/pxelinux.cfg/default"
+    owner: root
+    group: root
+    mode: '0644'
+

@@ -9,9 +9,33 @@ grub_password_hash: 'CHANGE_ME'
 # Disable swap (required for Kubernetes)
 disable_swap: true
 
-# Kubernetes ports to allow through UFW
-kubernetes_ports:
-  - "10250"
-  - "10256"
-  - "30000:32767"
+# Kubernetes ports per https://kubernetes.io/docs/reference/networking/ports-and-protocols/
+# Control plane ports (TCP)
+kubernetes_control_plane_ports:
+  - "6443"      # Kubernetes API server
+  - "2379:2380" # etcd server client API
+  - "10250"     # Kubelet API
+  - "10259"     # kube-scheduler
+  - "10257"     # kube-controller-manager
+
+# Worker node ports
+kubernetes_worker_ports_tcp:
+  - "10250"     # Kubelet API
+  - "10256"     # kube-proxy
+  - "30000:32767"  # NodePort Services (default range)
+  - "3300"   # Preferred port for Ceph clients and daemons connecting to Monitor
+  - "6789"   # Fallback port if 3300 fails
+
+kubernetes_worker_ports_udp:
+  - "30000:32767"  # NodePort Services (default range)
+
+# Ceph ports per https://docs.redhat.com/en/documentation/red_hat_ceph_storage/5/html/configuration_guide/ceph-firewall-ports_conf
+# Ceph Monitor ports (TCP)
+ceph_monitor_ports:
+  - "3300"   # Preferred port for Ceph clients and daemons connecting to Monitor
+  - "6789"   # Fallback port if 3300 fails
+
+# Ceph OSD ports (TCP)
+ceph_osd_ports:
+  - "6800:7300"  # Ceph OSDs port range
 

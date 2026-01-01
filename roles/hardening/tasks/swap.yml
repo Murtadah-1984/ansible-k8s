@@ -1,0 +1,22 @@
+---
+# Swap Configuration
+# Disables swap for Kubernetes compatibility (required for kubelet)
+
+# ============================================================================
+# SWAP CONFIGURATION
+# ============================================================================
+# Disable swap for Kubernetes compatibility (required for kubelet)
+
+- name: Disable swap (if not needed for Kubernetes)
+  command: swapoff -a
+  when: disable_swap | default(true)
+  changed_when: true
+  failed_when: false
+
+- name: Comment out swap entries in /etc/fstab
+  replace:
+    path: /etc/fstab
+    regexp: '^([^#].*?\sswap\s)'
+    replace: '#\1'
+  when: disable_swap | default(true)
+

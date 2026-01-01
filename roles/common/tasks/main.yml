@@ -1,26 +1,62 @@
-- name: Fail if not Ubuntu 22.04
-  assert:
-    that:
-      - ansible_distribution == "Ubuntu"
-      - ansible_distribution_version == "22.04"
-    fail_msg: "This role is optimized for Ubuntu 22.04 LTS (detected: {{ ansible_distribution }} {{ ansible_distribution_version }})"
+---
+# Common Role - Main Entry Point
+# Provides common system configuration and prerequisites
 
-- name: Wait for cloud-init
-  command: cloud-init status --wait
+# ============================================================================
+# OS VERSION CHECK
+# ============================================================================
+- name: Check OS version and wait for cloud-init
+  include_tasks: os_check.yml
+
+# ============================================================================
+# REPOSITORY CLEANUP
+# ============================================================================
+- name: Clean up Kubernetes repositories
+  include_tasks: repository_cleanup.yml
+
+# ============================================================================
+# PACKAGE INSTALLATION
+# ============================================================================
+- name: Install required packages
+  include_tasks: packages.yml
+  find:
+    paths: /etc/apt/sources.list.d
+    patterns:
+      - "*kubernetes*"
+      - "*k8s*"
+    file_type: file
+  register: k8s_repo_files
+  failed_when: false
   changed_when: false
+
+- name: Remove Kubernetes repository files
+  file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ k8s_repo_files.files | default([]) }}"
   failed_when: false
 
-- name: Aggressively remove all Kubernetes repository entries (fix conflicts)
-  shell: |
-    # Remove all Kubernetes repository files
-    rm -f /etc/apt/sources.list.d/*kubernetes* /etc/apt/sources.list.d/*k8s* 2>/dev/null || true
-    
-    # Remove Kubernetes repository lines from sources.list
-    sed -i '/pkgs\.k8s\.io/d' /etc/apt/sources.list 2>/dev/null || true
-    
-    # Remove any lines containing kubernetes or k8s from all sources.list.d files
-    find /etc/apt/sources.list.d -type f -exec sed -i '/pkgs\.k8s\.io/d' {} \; 2>/dev/null || true
+- name: Remove Kubernetes repository lines from sources.list
+  lineinfile:
+    path: /etc/apt/sources.list
+    regexp: 'pkgs\.k8s\.io'
+    state: absent
+  failed_when: false
+
+- name: Find all files in sources.list.d that might contain Kubernetes repos
+  find:
+    paths: /etc/apt/sources.list.d
+    file_type: file
+  register: sources_list_d_files
+  failed_when: false
   changed_when: false
+
+- name: Remove Kubernetes repository lines from sources.list.d files
+  lineinfile:
+    path: "{{ item.path }}"
+    regexp: 'pkgs\.k8s\.io'
+    state: absent
+  loop: "{{ sources_list_d_files.files | default([]) }}"
   failed_when: false
 
 - name: Verify no Kubernetes repository entries remain
@@ -36,8 +72,9 @@
   when: k8s_repo_check.stdout != "No entries found" and k8s_repo_check.stdout != ""
 
 - name: Clear APT cache after cleanup
-  command: apt-get clean
-  changed_when: false
+  apt:
+    update_cache: false
+    cache_valid_time: 0
   failed_when: false
 
 - name: Install uuid-runtime

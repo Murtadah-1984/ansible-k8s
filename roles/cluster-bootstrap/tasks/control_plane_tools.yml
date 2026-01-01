@@ -1,0 +1,150 @@
+---
+# Install Control Plane Tools
+# This task file installs essential tools for control plane nodes
+
+- name: Install Helm
+  block:
+    - name: Check if Helm is already installed
+      command: helm version --client
+      register: helm_check
+      changed_when: false
+      failed_when: false
+
+    - name: Download Helm install script
+      get_url:
+        url: https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+        dest: /tmp/get-helm-3.sh
+        mode: '0755'
+      when: helm_check.rc != 0
+
+    - name: Install Helm
+      command: /tmp/get-helm-3.sh
+      when: helm_check.rc != 0
+
+    - name: Verify Helm installation
+      command: helm version --client
+      register: helm_version
+      changed_when: false
+
+    - name: Display Helm version
+      debug:
+        msg: "Helm installed: {{ helm_version.stdout_lines[0] }}"
+
+- name: Create kubectl alias 'k'
+  block:
+    - name: Check if alias already exists in .bashrc
+      shell: grep -q "alias k=" /root/.bashrc
+      register: alias_check
+      changed_when: false
+      failed_when: false
+      ignore_errors: true
+
+    - name: Add kubectl alias to .bashrc
+      lineinfile:
+        path: /root/.bashrc
+        line: "alias k='kubectl'"
+        create: true
+      when: alias_check.rc != 0
+
+    - name: Check if alias already exists in /etc/bash.bashrc
+      shell: grep -q "alias k=" /etc/bash.bashrc
+      register: alias_check_global
+      changed_when: false
+      failed_when: false
+      ignore_errors: true
+
+    - name: Add kubectl alias to /etc/bash.bashrc for all users
+      lineinfile:
+        path: /etc/bash.bashrc
+        line: "alias k='kubectl'"
+        create: true
+      when: alias_check_global.rc != 0
+
+- name: Install calicoctl
+  block:
+    - name: Check if calicoctl is already installed
+      command: calicoctl version
+      register: calicoctl_check
+      changed_when: false
+      failed_when: false
+
+    - name: Download calicoctl
+      get_url:
+        url: "https://github.com/projectcalico/calico/releases/download/{{ calicoctl_version }}/calicoctl-linux-amd64"
+        dest: /tmp/calicoctl
+        mode: '0755'
+      when: calicoctl_check.rc != 0
+
+    - name: Move calicoctl to /usr/local/bin
+      copy:
+        src: /tmp/calicoctl
+        dest: /usr/local/bin/calicoctl
+        mode: '0755'
+        remote_src: true
+      when: calicoctl_check.rc != 0
+
+    - name: Verify calicoctl installation
+      command: calicoctl version
+      register: calicoctl_version
+      changed_when: false
+
+    - name: Display calicoctl version
+      debug:
+        msg: "calicoctl installed: {{ calicoctl_version.stdout_lines[0] if calicoctl_version.stdout_lines is defined else 'Version check completed' }}"
+
+- name: Install kube-bench
+  block:
+    - name: Check if kube-bench is already installed
+      command: kube-bench version
+      register: kube_bench_check
+      changed_when: false
+      failed_when: false
+
+    - name: Download kube-bench binary
+      get_url:
+        url: https://github.com/aquasecurity/kube-bench/releases/latest/download/kube-bench-linux-amd64
+        dest: /tmp/kube-bench
+        mode: '0755'
+      when: kube_bench_check.rc != 0
+
+    - name: Move kube-bench to /usr/local/bin
+      copy:
+        src: /tmp/kube-bench
+        dest: /usr/local/bin/kube-bench
+        mode: '0755'
+        remote_src: true
+      when: kube_bench_check.rc != 0
+
+    - name: Verify kube-bench installation
+      command: kube-bench version
+      register: kube_bench_version
+      changed_when: false
+
+    - name: Display kube-bench version
+      debug:
+        msg: "kube-bench installed: {{ kube_bench_version.stdout_lines[0] if kube_bench_version.stdout_lines is defined else 'Version check completed' }}"
+
+- name: Install Argo CD CLI
+  block:
+    - name: Check if argocd is already installed
+      command: argocd version --client
+      register: argocd_check
+      changed_when: false
+      failed_when: false
+
+    - name: Download Argo CD CLI
+      get_url:
+        url: https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+        dest: /usr/local/bin/argocd
+        mode: '0755'
+      when: argocd_check.rc != 0
+
+    - name: Verify Argo CD CLI installation
+      command: argocd version --client
+      register: argocd_version
+      changed_when: false
+
+    - name: Display Argo CD CLI version
+      debug:
+        msg: "Argo CD CLI installed: {{ argocd_version.stdout_lines[0] if argocd_version.stdout_lines is defined else 'Version check completed' }}"
+

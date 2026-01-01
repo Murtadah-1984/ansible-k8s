@@ -1,0 +1,42 @@
+---
+# Join Worker Nodes
+# This task file handles joining worker nodes to the cluster
+
+- name: Set first control plane hostname
+  set_fact:
+    first_control_plane: "{{ groups['control'][0] }}"
+
+- name: Check if node is already joined
+  stat:
+    path: /etc/kubernetes/kubelet.conf
+  register: kubelet_conf_exists
+  changed_when: false
+
+- name: Get join command from first control plane
+  shell: cat /tmp/worker-join-command.sh
+  register: join_command_raw
+  delegate_to: "{{ first_control_plane }}"
+  when: not kubelet_conf_exists.stat.exists
+  changed_when: false
+
+- name: Join worker node
+  shell: "{{ join_command_raw.stdout | trim }}"
+  when:
+    - not kubelet_conf_exists.stat.exists
+    - join_command_raw.stdout is defined
+    - join_command_raw.stdout | trim != ''
+  async: 300
+  poll: 10
+
+- name: Wait for node to be ready
+  command: kubectl get nodes {{ inventory_hostname }} --no-headers
+  register: node_status
+  until: node_status.rc == 0 and ' Ready ' in node_status.stdout
+  retries: 30
+  delay: 10
+  delegate_to: "{{ first_control_plane }}"
+  when: not kubelet_conf_exists.stat.exists
+  ignore_errors: true
+  environment:
+    KUBECONFIG: /root/.kube/config
+

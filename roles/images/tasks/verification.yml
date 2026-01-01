@@ -1,0 +1,24 @@
+---
+# Image Verification
+# Verifies that images are available in containerd
+
+# ============================================================================
+# VERIFICATION
+# ============================================================================
+- name: Verify images are available in containerd
+  command: crictl images
+  environment:
+    CONTAINER_RUNTIME_ENDPOINT: unix:///run/containerd/containerd.sock
+    IMAGE_SERVICE_ENDPOINT: unix:///run/containerd/containerd.sock
+  register: crictl_images
+  changed_when: false
+  failed_when: false
+
+- name: Count verified Kubernetes images
+  set_fact:
+    verified_count: "{{ (crictl_images.stdout | regex_findall('(k8s\\.gcr\\.io|registry\\.k8s\\.io)') | length) | default(0) }}"
+
+- name: Display verification result
+  debug:
+    msg: "{{ 'Verified ' + verified_count | string + ' Kubernetes image(s) in containerd storage' if verified_count | int > 0 else 'Could not verify images in containerd storage (this may be normal)' }}"
+

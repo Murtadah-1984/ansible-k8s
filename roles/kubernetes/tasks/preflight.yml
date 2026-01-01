@@ -1,0 +1,30 @@
+---
+# Pre-flight Checks for Kubernetes Installation
+# Verifies prerequisites before installing Kubernetes
+
+# ============================================================================
+# SWAP VERIFICATION (Kubernetes requirement)
+# ============================================================================
+- name: Verify swap is disabled (CIS requirement)
+  command: swapon --show
+  register: swap_status
+  changed_when: false
+  failed_when: false
+
+- name: Fail if swap is enabled
+  assert:
+    that:
+      - swap_status.stdout == ""
+    fail_msg: "FAIL: Swap is enabled. Kubernetes requires swap to be disabled (CIS requirement)."
+    success_msg: "PASS: Swap is disabled"
+
+- name: Verify required kernel modules are loaded
+  command: lsmod | grep -E "^(overlay|br_netfilter)"
+  register: kernel_modules
+  changed_when: false
+  failed_when: false
+
+- name: Warn if kernel modules not loaded
+  debug:
+    msg: "WARNING: Required kernel modules (overlay, br_netfilter) may not be loaded. Ensure kernal role runs before kubernetes role."
+

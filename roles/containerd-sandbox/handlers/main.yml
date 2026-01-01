@@ -1,0 +1,17 @@
+---
+# Handlers for containerd-sandbox role
+
+- name: restart containerd
+  systemd:
+    name: containerd
+    state: restarted
+    enabled: true
+  register: containerd_restart_handler
+
+- name: wait for containerd ready
+  wait_for:
+    path: /run/containerd/containerd.sock
+    state: present
+    timeout: 30
+  listen: restart containerd
+

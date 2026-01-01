@@ -1,0 +1,5 @@
+---
+# Default variables for pxe-tftp role
+
+tftp_root: "/srv/tftp"
+

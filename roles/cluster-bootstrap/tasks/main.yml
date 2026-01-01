@@ -1,0 +1,55 @@
+---
+# Main entry point for cluster-bootstrap role
+# This role orchestrates the complete Kubernetes cluster bootstrap process
+
+# ============================================================================
+# INITIALIZE FIRST CONTROL PLANE NODE
+# ============================================================================
+- name: Initialize first control plane node
+  include_tasks: init_control_plane.yml
+  when: inventory_hostname == groups['control'][0]
+
+# ============================================================================
+# INSTALL CONTROL PLANE TOOLS
+# ============================================================================
+- name: Install control plane tools
+  include_tasks: control_plane_tools.yml
+  when: inventory_hostname in groups['control']
+
+# ============================================================================
+# JOIN ADDITIONAL CONTROL PLANE NODES
+# ============================================================================
+- name: Join additional control plane nodes
+  include_tasks: join_control_plane.yml
+  when:
+    - inventory_hostname in groups['control']
+    - inventory_hostname != groups['control'][0]
+
+# ============================================================================
+# JOIN WORKER NODES
+# ============================================================================
+- name: Join worker nodes
+  include_tasks: join_workers.yml
+  when: inventory_hostname in groups['workers']
+
+# ============================================================================
+# INSTALL CNI PLUGIN
+# ============================================================================
+- name: Install CNI plugin
+  include_tasks: install_cni.yml
+  when: inventory_hostname == groups['control'][0]
+
+# ============================================================================
+# CONFIGURE CLUSTER ACCESS
+# ============================================================================
+- name: Configure cluster access
+  include_tasks: configure_access.yml
+  when: inventory_hostname == groups['control'][0]
+
+# ============================================================================
+# APPLY CIS-COMPLIANT CLUSTER CONFIGURATION
+# ============================================================================
+- name: Apply CIS-compliant cluster configuration
+  include_tasks: cis_config.yml
+  when: inventory_hostname == groups['control'][0]
+

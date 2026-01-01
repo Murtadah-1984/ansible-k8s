@@ -1,0 +1,31 @@
+---
+# Kubernetes State Cleanup
+# Removes kubelet and Kubernetes state directories
+
+# =============================================================================
+# 5) REMOVE kubelet & Kubernetes state (kubeadm doesn't remove all)
+# =============================================================================
+- name: Remove kubelet state directory
+  ansible.builtin.file:
+    path: /var/lib/kubelet
+    state: absent
+  failed_when: false
+
+- name: Remove kubelet service drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/kubelet.service.d
+    state: absent
+  failed_when: false
+
+- name: Remove Kubernetes configuration directory
+  ansible.builtin.file:
+    path: /etc/kubernetes
+    state: absent
+  failed_when: false
+
+- name: Remove etcd data directory
+  ansible.builtin.file:
+    path: /var/lib/etcd
+    state: absent
+  failed_when: false
+

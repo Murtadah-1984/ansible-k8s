@@ -1,3 +1,53 @@
+---
+# Kubernetes Node Bootstrap Playbook (Bare Metal)
+# This playbook bootstraps Kubernetes nodes with all required components
+# following CIS best practices and security hardening
+#
+# Prerequisites:
+# - Ubuntu 22.04 LTS nodes
+# - SSH access to all nodes
+# - Network connectivity between nodes
+# - Root or sudo access
+#
+# Usage:
+#   ansible-playbook -i inventory.ini playbook.yml
+#
+# Variables:
+#   - kubernetes_version: Kubernetes version to install (default: from group_vars/all.yml)
+#   - All role-specific variables defined in roles/*/defaults/main.yml
+#
+# Roles executed in order:
+#   1. common - Base system configuration and prerequisites
+#   2. hardening - CIS Ubuntu 24.04 LTS STIG compliance
+#   3. kernal - Kernel module configuration
+#   4. containerd - Container runtime installation and configuration
+#   5. kubernetes - Kubernetes components installation
+#   6. images - Container image pre-pulling
+#   7. monitoring - Monitoring components (journald, chrony, node_exporter, fluent-bit)
+#   8. cleanup - System cleanup and optimization
+#   9. audit - Audit logging configuration
+
+- name: Install PXE Server
+  hosts: localhost
+  become: true
+  gather_facts: true
+
+  roles:
+    - pxe-common
+    - pxe-dnsmasq
+    - pxe-tftp
+    - pxe-ubuntu-netboot
+    - pxe-boot
+    - pxe-nginx
+    - pxe-autoinstall
+
+- name: Install Load Balancer
+  hosts: loadbalancer
+  become: true
+  gather_facts: true
+  roles:
+    - loadbalancer
+
 - name: Kubernetes Node Bootstrap (Bare Metal)
   hosts: k8s_nodes
   become: true
@@ -10,5 +60,14 @@
     - containerd
     - kubernetes
     - images
+    - monitoring
     - cleanup
     - audit
+
+- name: Reset Kubernetes Nodes
+  hosts: all
+  become: true
+  gather_facts: true
+
+  roles:
+    - reset-kubernetes

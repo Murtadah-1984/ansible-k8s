@@ -1,0 +1,63 @@
+---
+# File Integrity Monitoring (AIDE)
+# Configures AIDE for file integrity monitoring per CIS STIG requirements
+
+# ============================================================================
+# FILE INTEGRITY MONITORING (AIDE)
+# ============================================================================
+# Configure AIDE for file integrity monitoring per CIS STIG requirements
+# UBTU-24-90890: Protect audit tools with cryptographic mechanisms
+# UBTU-24-100110: Initialize AIDE database (Manual, but automated here)
+# UBTU-24-100130: Configure AIDE to notify on baseline changes
+
+- name: Configure AIDE to protect audit tools (UBTU-24-90890)
+  blockinfile:
+    path: /etc/aide/aide.conf
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - Audit Tools"
+    block: |
+      # Audit Tools
+      /sbin/auditctl p+i+n+u+g+s+b+acl+xattrs+sha512
+      /sbin/auditd p+i+n+u+g+s+b+acl+xattrs+sha512
+      /sbin/ausearch p+i+n+u+g+s+b+acl+xattrs+sha512
+      /sbin/aureport p+i+n+u+g+s+b+acl+xattrs+sha512
+      /sbin/autrace p+i+n+u+g+s+b+acl+xattrs+sha512
+      /sbin/augenrules p+i+n+u+g+s+b+acl+xattrs+sha512
+
+- name: Configure AIDE to notify on changes (UBTU-24-100130)
+  lineinfile:
+    path: /etc/default/aide
+    regexp: '^SILENTREPORTS='
+    line: 'SILENTREPORTS=no'
+    create: true
+
+- name: Initialize AIDE database if not exists (UBTU-24-100110)
+  command: aideinit
+  args:
+    creates: /var/lib/aide/aide.db
+  changed_when: false
+  failed_when: false
+
+- name: Check if AIDE database exists
+  stat:
+    path: /var/lib/aide/aide.db
+  register: aide_db_exists
+  changed_when: false
+
+- name: Check if new AIDE database exists
+  stat:
+    path: /var/lib/aide/aide.db.new
+  register: aide_db_new_exists
+  changed_when: false
+
+- name: Copy AIDE database if new one exists (UBTU-24-100110)
+  copy:
+    src: /var/lib/aide/aide.db.new
+    dest: /var/lib/aide/aide.db
+    remote_src: true
+    owner: root
+    group: root
+    mode: '0600'
+  when: 
+    - not aide_db_exists.stat.exists | default(false)
+    - aide_db_new_exists.stat.exists | default(false)
+

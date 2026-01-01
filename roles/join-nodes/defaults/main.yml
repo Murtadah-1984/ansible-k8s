@@ -1,0 +1,19 @@
+---
+# Default variables for join-nodes role
+
+# Join configuration
+join_token: ""
+discovery_token_ca_cert_hash: ""
+api_server_endpoint: ""
+
+# Auto-fetch join information from control plane
+auto_fetch_join_info: false
+control_plane_host: "{{ groups['control'][0] }}"
+
+# Node configuration
+node_labels: []
+node_taints: []
+
+# Behavior flags
+skip_if_already_joined: true
+

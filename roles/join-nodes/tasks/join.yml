@@ -1,0 +1,69 @@
+---
+# Execute kubeadm Join
+# Builds and executes kubeadm join command
+
+# =============================================================================
+# Prepare join command
+# =============================================================================
+- name: Build base kubeadm join command
+  ansible.builtin.set_fact:
+    join_command: >
+      kubeadm join {{ api_server_endpoint }}
+      --token {{ join_token }}
+      --discovery-token-ca-cert-hash {{ discovery_token_ca_cert_hash }}
+      --ignore-preflight-errors=all
+
+- name: Add node labels to join command
+  ansible.builtin.set_fact:
+    join_command: "{{ join_command }} --node-labels={{ node_labels | join(',') }}"
+  when: node_labels | length > 0
+
+- name: Add node taints to join command
+  ansible.builtin.set_fact:
+    join_command: "{{ join_command }} --node-taints={{ node_taints | join(',') }}"
+  when: node_taints | length > 0
+
+# =============================================================================
+# Execute kubeadm join
+# =============================================================================
+- name: Display join command (without token for security)
+  ansible.builtin.debug:
+    msg: "Joining node {{ inventory_hostname }} to cluster at {{ api_server_endpoint }}"
+  when: not (skip_if_already_joined and kubelet_config.stat.exists)
+
+- name: Execute kubeadm join
+  ansible.builtin.shell: "{{ join_command }}"
+  register: join_result
+  when: not (skip_if_already_joined and kubelet_config.stat.exists)
+
+- name: Display join result
+  ansible.builtin.debug:
+    msg: "{{ join_result.stdout_lines }}"
+  when: not (skip_if_already_joined and kubelet_config.stat.exists) and join_result.stdout_lines is defined
+
+# =============================================================================
+# Post-join configuration
+# =============================================================================
+- name: Wait for kubelet to be ready
+  ansible.builtin.systemd:
+    name: kubelet
+    state: started
+  register: kubelet_status
+  until: kubelet_status.status.ActiveState == "active"
+  retries: 30
+  delay: 2
+  when: not (skip_if_already_joined and kubelet_config.stat.exists)
+
+- name: Enable kubelet service
+  ansible.builtin.systemd:
+    name: kubelet
+    enabled: yes
+  when: not (skip_if_already_joined and kubelet_config.stat.exists)
+
+- name: Wait for node to appear in cluster (up to 2 minutes)
+  ansible.builtin.pause:
+    seconds: 10
+  when: not (skip_if_already_joined and kubelet_config.stat.exists)
+  delegate_to: localhost
+  run_once: true
+

@@ -1,0 +1,9 @@
+---
+# Default variables for containerd-config role
+
+containerd_config_path: /etc/containerd/config.toml
+backup_existing: true
+set_systemd_cgroup: true
+use_minimal_config: false
+sandbox_image: "{{ containerd_sandbox_image | default('registry.k8s.io/pause:3.10') }}"
+

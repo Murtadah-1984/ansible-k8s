@@ -1,0 +1,171 @@
+---
+# System Configuration
+# Configures hostname, /etc/hosts, and postfix for local-only delivery
+
+# ============================================================================
+# SYSTEM CONFIGURATION
+# ============================================================================
+
+- name: Ensure proper hostname is set
+  hostname:
+    name: "{{ inventory_hostname }}"
+  register: hostname_result
+
+- name: Ensure /etc/hosts has proper entry for hostname resolution
+  lineinfile:
+    path: /etc/hosts
+    regexp: '^127\.0\.0\.1\s+.*{{ inventory_hostname }}'
+    line: "127.0.0.1 localhost {{ inventory_hostname }}"
+    state: present
+  when: hostname_result.changed | default(false)
+
+# ============================================================================
+# POSTFIX CONFIGURATION
+# ============================================================================
+# Configure postfix for local-only delivery to prevent mail relay vulnerabilities
+# Pre-configure debconf settings before package installation
+
+- name: Configure postfix for local-only delivery (pre-configure before installation)
+  debconf:
+    name: postfix
+    question: "{{ item.question }}"
+    value: "{{ item.value }}"
+    vtype: "{{ item.vtype }}"
+  loop:
+    - { question: 'postfix/main_mailer_type', value: 'local', vtype: 'select' }
+    - { question: 'postfix/mailname', value: 'localhost.localdomain', vtype: 'string' }
+    - { question: 'postfix/root_address', value: '', vtype: 'string' }
+    - { question: 'postfix/destinations', value: 'localhost.localdomain, localhost', vtype: 'string' }
+  when: ansible_pkg_mgr == 'apt'
+  failed_when: false
+
+- name: Fix existing postfix configuration if present (before package installation)
+  block:
+    - name: Check if postfix configuration exists
+      stat:
+        path: /etc/postfix/main.cf
+      register: postfix_config_exists
+
+    - name: Fix postfix main.cf for local-only (remove invalid domain)
+      lineinfile:
+        path: /etc/postfix/main.cf
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        backup: true
+      loop:
+        - { regexp: '^myhostname\s*=', line: 'myhostname = localhost.localdomain' }
+        - { regexp: '^mydomain\s*=', line: 'mydomain = localdomain' }
+        - { regexp: '^mydestination\s*=', line: 'mydestination = localhost.localdomain, localhost' }
+        - { regexp: '^inet_interfaces\s*=', line: 'inet_interfaces = loopback-only' }
+      when: postfix_config_exists.stat.exists
+
+    - name: Remove any lines with invalid IP addresses in postfix config
+      lineinfile:
+        path: /etc/postfix/main.cf
+        regexp: '^mydomain\s*=\s*8\.8\.4\.4'
+        line: 'mydomain = localdomain'
+        state: present
+      when: postfix_config_exists.stat.exists
+
+    - name: Fix invalid domain in postfix config using replace module
+      replace:
+        path: /etc/postfix/main.cf
+        regexp: '^mydomain\s*=\s*8\.8\.4\.4'
+        replace: 'mydomain = localdomain'
+      when: postfix_config_exists.stat.exists
+      failed_when: false
+
+    - name: Fix /etc/mailname if it contains invalid domain
+      lineinfile:
+        path: /etc/mailname
+        line: 'localhost.localdomain'
+        regexp: '.*'
+        create: true
+      when: postfix_config_exists.stat.exists
+      failed_when: false
+
+- name: Fix postfix configuration (always run after package installation)
+  block:
+    - name: Check if postfix configuration exists
+      stat:
+        path: /etc/postfix/main.cf
+      register: postfix_config
+
+    - name: Fix postfix main.cf for local-only
+      lineinfile:
+        path: /etc/postfix/main.cf
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        backup: true
+      loop:
+        - { regexp: '^myhostname\s*=', line: 'myhostname = localhost.localdomain' }
+        - { regexp: '^mydomain\s*=', line: 'mydomain = localdomain' }
+        - { regexp: '^mydestination\s*=', line: 'mydestination = localhost.localdomain, localhost' }
+        - { regexp: '^inet_interfaces\s*=', line: 'inet_interfaces = loopback-only' }
+      when: postfix_config.stat.exists
+
+    - name: Remove any lines with invalid IP addresses in postfix config (recovery)
+      lineinfile:
+        path: /etc/postfix/main.cf
+        regexp: '^mydomain\s*=\s*8\.8\.4\.4'
+        line: 'mydomain = localdomain'
+        state: present
+      when: postfix_config.stat.exists
+
+    # Use replace module instead of sed for idempotency
+    - name: Fix invalid domain in postfix config using replace module (recovery)
+      replace:
+        path: /etc/postfix/main.cf
+        regexp: '^mydomain\s*=\s*8\.8\.4\.4'
+        replace: 'mydomain = localdomain'
+      when: postfix_config.stat.exists
+      failed_when: false
+
+    - name: Fix hostname with invalid IP domain using replace module
+      replace:
+        path: /etc/postfix/main.cf
+        regexp: '\.8\.8\.4\.4$'
+        replace: '.localdomain'
+      when: postfix_config.stat.exists
+      failed_when: false
+
+    - name: Fix /etc/mailname
+      lineinfile:
+        path: /etc/mailname
+        line: 'localhost.localdomain'
+        regexp: '.*'
+        create: true
+
+    # Use postconf to ensure configuration is applied (postconf is idempotent)
+    - name: Ensure postfix domain is configured correctly
+      command: postconf -e "mydomain=localdomain"
+      failed_when: false
+      changed_when: false
+      when: postfix_config.stat.exists
+
+    - name: Ensure postfix hostname is configured correctly
+      command: postconf -e "myhostname=localhost.localdomain"
+      failed_when: false
+      changed_when: false
+      when: postfix_config.stat.exists
+
+    - name: Reconfigure failed packages if needed
+      command: dpkg --configure -a
+      failed_when: false
+      changed_when: false
+      register: dpkg_reconfigure
+
+    - name: Verify postfix configuration
+      command: postconf mydomain
+      register: postfix_mydomain
+      changed_when: false
+      failed_when: false
+      when: postfix_config.stat.exists
+
+    - name: Display postfix domain status for verification
+      debug:
+        msg: "Postfix mydomain: {{ postfix_mydomain.stdout | default('not set') }}"
+      when: 
+        - postfix_config.stat.exists
+        - postfix_mydomain.rc == 0
+

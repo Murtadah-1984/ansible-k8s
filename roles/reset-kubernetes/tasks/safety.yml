@@ -1,0 +1,30 @@
+---
+# Safety Checks
+# Displays warning and requires explicit confirmation
+
+# =============================================================================
+# SAFETY CHECKS
+# =============================================================================
+- name: Display WARNING message
+  ansible.builtin.debug:
+    msg:
+      - "======================================================"
+      - "  Kubernetes Node FULL RESET (Aligned with kubeadm docs)"
+      - "======================================================"
+      - ""
+      - "➡ This role will gracefully stop kube-apiserver,"
+      - "   run kubeadm reset, and clean CNI safely."
+      - ""
+      - "➡ It will NOT flush iptables globally, per Kubernetes docs."
+      - "➡ It will NOT remove ~/.kube unless remove_kubeconfig=true."
+      - ""
+      - "======================================================"
+      - "Set 'perform_reset: true' in vars to proceed"
+  run_once: true
+
+- name: Fail if perform_reset is not true
+  ansible.builtin.fail:
+    msg: "Safety check failed. Set 'perform_reset: true' in the playbook vars to proceed with cluster reset."
+  when: not (perform_reset | default(false))
+  run_once: true
+

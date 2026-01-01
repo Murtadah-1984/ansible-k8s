@@ -1,0 +1,18 @@
+---
+# Package Cleanup
+# Removes unnecessary packages and clears cache
+
+# ============================================================================
+# PACKAGE CLEANUP
+# ============================================================================
+- name: Remove unnecessary packages
+  apt:
+    autoremove: yes
+    autoclean: yes
+    update_cache: false
+
+- name: Clear package cache
+  apt:
+    clean: yes
+    update_cache: false
+

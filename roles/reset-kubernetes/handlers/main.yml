@@ -1,0 +1,12 @@
+---
+# =============================================================================
+# RESET KUBERNETES ROLE - HANDLERS
+# =============================================================================
+# NOTE: This role does not use handlers because:
+#   - It performs a full cluster reset, not configuration changes
+#   - Services are directly managed (stopped/started) in tasks
+#   - Handlers are typically used for restarting services after config changes
+# =============================================================================
+# This file is kept for consistency with other roles, but handlers are not used
+# in the reset-kubernetes role tasks.
+# =============================================================================

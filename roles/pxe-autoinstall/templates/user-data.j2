@@ -1,0 +1,14 @@
+#cloud-config
+autoinstall:
+  version: 1
+  identity:
+    hostname: {{ pxe_hostname }}
+    username: {{ pxe_user }}
+    password: "{{ pxe_password_hash }}"
+  ssh:
+    install-server: true
+    allow-pw: {{ pxe_ssh_allow_pw | lower }}
+  storage:
+    layout:
+      name: direct
+

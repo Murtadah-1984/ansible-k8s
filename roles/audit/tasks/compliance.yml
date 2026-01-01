@@ -1,0 +1,96 @@
+---
+# Additional Compliance Checks
+# Verifies file permissions, password policy, AIDE, and other STIG requirements
+
+- name: File permission checks
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  loop:
+    - { path: /etc/passwd, mode: "0644" }
+    - { path: /etc/shadow, mode: "0640" }
+    - { path: /etc/group, mode: "0644" }
+    - { path: /etc/gshadow, mode: "0640" }
+  register: perm_stats
+
+- name: Permission results output
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'PASS: ' ~ item.item.path ~ ' mode ' ~ item.stat.mode
+         if (item.stat.exists and item.stat.mode == item.item.mode)
+         else ('FAIL: ' ~ item.item.path ~ ' mode ' ~ (item.stat.mode | default('MISSING')) ~ ' (expected ' ~ item.item.mode ~ ')') }}
+  loop: "{{ perm_stats.results }}"
+
+- name: Password policy check (UBTU-24-100600)
+  ansible.builtin.command: grep -q "pam_pwquality.so" /etc/pam.d/common-password
+  register: pwq
+  changed_when: false
+  failed_when: false
+
+- name: Password policy output
+  ansible.builtin.debug:
+    msg: "{{ 'PASS: pam_pwquality is configured' if pwq.rc == 0 else 'FAIL: pam_pwquality not found in common-password' }}"
+
+- name: Check AIDE installation and configuration (UBTU-24-100100, UBTU-24-90890)
+  ansible.builtin.command: dpkg -l | grep "^ii.*aide"
+  register: aide_installed
+  changed_when: false
+  failed_when: false
+
+- name: Check AIDE database exists
+  ansible.builtin.stat:
+    path: /var/lib/aide/aide.db
+  register: aide_db
+
+- name: Check AIDE configuration for audit tools
+  ansible.builtin.command: grep -E "(\/sbin\/(audit|au))" /etc/aide/aide.conf
+  register: aide_audit_tools
+  changed_when: false
+  failed_when: false
+
+- name: AIDE results
+  ansible.builtin.debug:
+    msg:
+      - "{{ 'PASS: AIDE is installed' if aide_installed.rc == 0 else 'FAIL: AIDE is not installed' }}"
+      - "{{ 'PASS: AIDE database exists' if aide_db.stat.exists else 'WARN: AIDE database does not exist (run aideinit)' }}"
+      - "{{ 'PASS: AIDE audit tools configured' if aide_audit_tools.rc == 0 else 'FAIL: AIDE audit tools not configured' }}"
+
+- name: Check AIDE silent reports setting (UBTU-24-100130)
+  ansible.builtin.command: grep "^SILENTREPORTS=no" /etc/default/aide
+  register: aide_silent
+  changed_when: false
+  failed_when: false
+
+- name: AIDE silent reports result
+  ansible.builtin.debug:
+    msg: "{{ 'PASS: AIDE SILENTREPORTS=no' if aide_silent.rc == 0 else 'FAIL: AIDE SILENTREPORTS not set to no' }}"
+
+- name: Check system limits maxlogins (UBTU-24-200000)
+  ansible.builtin.command: grep "maxlogins" /etc/security/limits.conf
+  register: maxlogins
+  changed_when: false
+  failed_when: false
+
+- name: Maxlogins result
+  ansible.builtin.debug:
+    msg: "{{ 'PASS: maxlogins configured' if (maxlogins.rc == 0 and 'maxlogins 10' in maxlogins.stdout) else 'FAIL: maxlogins not configured to 10' }}"
+
+- name: Check session timeout (UBTU-24-200060)
+  ansible.builtin.command: grep "TMOUT=600" /etc/profile.d/*.sh
+  register: tmout
+  changed_when: false
+  failed_when: false
+
+- name: Session timeout result
+  ansible.builtin.debug:
+    msg: "{{ 'PASS: TMOUT=600 configured' if tmout.rc == 0 else 'FAIL: TMOUT not configured to 600' }}"
+
+- name: Check GRUB audit=1 (UBTU-24-102010)
+  ansible.builtin.command: grep "^\s*linux" /boot/grub/grub.cfg | grep -v "audit=1"
+  register: grub_audit
+  changed_when: false
+  failed_when: false
+
+- name: GRUB audit result
+  ansible.builtin.debug:
+    msg: "{{ 'FAIL: Some GRUB entries missing audit=1' if grub_audit.rc == 0 else 'PASS: All GRUB entries have audit=1' }}"
+

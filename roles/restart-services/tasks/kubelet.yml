@@ -1,0 +1,28 @@
+---
+# Kubelet Service Restart
+# Restarts and verifies kubelet service
+
+- name: Restart kubelet service
+  systemd:
+    name: kubelet
+    state: restarted
+    enabled: yes
+  register: kubelet_result
+
+- name: Wait for kubelet to be running
+  systemd:
+    name: kubelet
+    state: started
+  register: kubelet_status
+  until: kubelet_status.status.ActiveState == "active"
+  retries: 10
+  delay: 5
+  failed_when: false
+
+- name: Verify kubelet is active
+  assert:
+    that:
+      - kubelet_status.status.ActiveState == "active"
+    fail_msg: "kubelet failed to start after restart"
+    success_msg: "kubelet is running successfully"
+

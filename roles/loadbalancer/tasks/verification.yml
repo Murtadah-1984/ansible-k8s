@@ -1,0 +1,43 @@
+---
+# Service Verification
+# Verifies HAProxy and Keepalived are running
+
+# =============================================================================
+# 7) VERIFY SERVICES STATUS
+# =============================================================================
+- name: Check HAProxy service status
+  systemd:
+    name: haproxy
+  register: haproxy_status
+  changed_when: false
+
+- name: Check Keepalived service status
+  systemd:
+    name: keepalived
+  register: keepalived_status
+  changed_when: false
+
+- name: Display installation summary
+  debug:
+    msg:
+      - "======================================================"
+      - "✔ Installation completed on {{ inventory_hostname }}"
+      - ""
+      - "HAProxy status: {{ haproxy_status.status.ActiveState }}"
+      - "Keepalived status: {{ keepalived_status.status.ActiveState }}"
+      - ""
+      - "Configuration files:"
+      - "  - /etc/haproxy/haproxy.cfg"
+      - "  - /etc/keepalived/keepalived.conf"
+      - "  - /etc/keepalived/check_apiserver.sh"
+      - ""
+      - "HAProxy is listening on port 8443"
+      - "Keepalived role: {{ keepalived_role }} (priority: {{ keepalived_priority }})"
+      - "Keepalived virtual IP: {{ keepalived_virtual_ip }}"
+      - "Keepalived interface: {{ keepalived_interface_final }}"
+      - ""
+      - "Backend control plane nodes:"
+      - "  {{ control_plane_nodes | map(attribute='name') | join(', ') }}"
+      - ""
+      - "======================================================"
+

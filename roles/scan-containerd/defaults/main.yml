@@ -1,0 +1,8 @@
+---
+# Default variables for scan-containerd role
+
+containerd_config_path: /etc/containerd/config.toml
+check_duplicates: true
+check_toml_syntax: true
+check_permissions: true
+

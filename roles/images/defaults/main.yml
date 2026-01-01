@@ -1,0 +1,7 @@
+---
+# Default variables for images role
+
+# Kubernetes version for image pre-loading
+# This should match the kubernetes_version from group_vars or kubernetes role
+kubernetes_version: "1.34"
+

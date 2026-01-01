@@ -1,0 +1,17 @@
+---
+# Configure nginx for PXE autoinstall files
+
+- name: Ensure HTTP root directory exists
+  file:
+    path: "{{ http_root }}"
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Ensure nginx running
+  systemd:
+    name: nginx
+    state: started
+    enabled: true
+

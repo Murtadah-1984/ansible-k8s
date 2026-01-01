@@ -1,0 +1,54 @@
+---
+# Kubernetes Package Installation
+# Auto-detects version and installs Kubernetes components
+
+- name: Auto-detect exact Kubernetes version from repository
+  block:
+    - name: Get Kubernetes minor version
+      set_fact:
+        k8s_minor_version: "{{ kubernetes_version | regex_replace('^(\\d+\\.\\d+).*', '\\1') }}"
+        k8s_repo_version: "v{{ kubernetes_version | regex_replace('^(\\d+\\.\\d+).*', '\\1') }}"
+
+    - name: Check if version is minor or full
+      set_fact:
+        is_minor_version: "{{ kubernetes_version is match('^\\d+\\.\\d+$') }}"
+
+    - name: Get available versions from repository
+      command: apt-cache madison kubeadm
+      register: kubeadm_versions
+      changed_when: false
+
+    - name: Extract matching version for minor version
+      set_fact:
+        available_version: "{{ (kubeadm_versions.stdout_lines | select('match', '.*' + kubernetes_version + '\\.') | map('regex_replace', '.*\\s+(\\S+).*', '\\1') | list | first) | default('') }}"
+      when: is_minor_version | bool
+
+    - name: Extract exact matching version for full version
+      set_fact:
+        available_version: "{{ (kubeadm_versions.stdout_lines | select('match', '.*' + kubernetes_version) | map('regex_replace', '.*\\s+(\\S+).*', '\\1') | list | first) | default('') }}"
+      when: not (is_minor_version | bool)
+
+    - name: Fail if version not found
+      fail:
+        msg: "Kubernetes version {{ kubernetes_version }} not found in repository. Available versions: {{ kubeadm_versions.stdout_lines[:5] | join(', ') }}"
+      when: available_version == '' or available_version is not defined
+
+    - name: Store pure version for image preloading
+      set_fact:
+        k8s_pure_version: "{{ available_version | regex_replace('^(\\d+\\.\\d+\\.\\d+).*', '\\1') }}"
+
+- name: Install Kubernetes components with detected version
+  apt:
+    name:
+      - "kubectl={{ available_version }}"
+      - "kubelet={{ available_version }}"
+      - "kubeadm={{ available_version }}"
+    state: present
+    update_cache: false
+  when: available_version is defined and available_version != ''
+
+- name: Hold Kubernetes packages
+  command: apt-mark hold kubelet kubeadm kubectl
+  changed_when: false
+  failed_when: false
+

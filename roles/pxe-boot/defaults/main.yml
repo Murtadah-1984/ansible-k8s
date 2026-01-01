@@ -1,0 +1,7 @@
+---
+# Default variables for pxe-boot role
+
+tftp_root: "/srv/tftp"
+pxe_ip: "{{ ansible_default_ipv4.address }}"
+ubuntu_version: "22.04"
+

@@ -1,0 +1,37 @@
+---
+# Deploy Ubuntu autoinstall configuration files
+
+- name: Create autoinstall directory
+  file:
+    path: "{{ http_root }}/autoinstall"
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Deploy user-data
+  template:
+    src: user-data.j2
+    dest: "{{ http_root }}/autoinstall/user-data"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Deploy meta-data
+  template:
+    src: meta-data.j2
+    dest: "{{ http_root }}/autoinstall/meta-data"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Display autoinstall URLs
+  debug:
+    msg:
+      - "Autoinstall files deployed:"
+      - "  user-data: http://{{ ansible_default_ipv4.address }}/autoinstall/user-data"
+      - "  meta-data: http://{{ ansible_default_ipv4.address }}/autoinstall/meta-data"
+      - ""
+      - "Configured hostname: {{ pxe_hostname }}"
+      - "Configured user: {{ pxe_user }}"
+

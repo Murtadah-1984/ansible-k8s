@@ -1,0 +1,37 @@
+---
+# Pre-load Kubernetes Images
+# Pulls all required Kubernetes container images
+
+# ============================================================================
+# PRE-LOAD IMAGES
+# ============================================================================
+- name: Pre-load Kubernetes container images
+  command: crictl pull "{{ item }}"
+  environment:
+    CONTAINER_RUNTIME_ENDPOINT: unix:///run/containerd/containerd.sock
+    IMAGE_SERVICE_ENDPOINT: unix:///run/containerd/containerd.sock
+  loop: "{{ k8s_image_list }}"
+  register: image_pull_results
+  retries: 3
+  delay: 5
+  until: image_pull_results.results | selectattr('item', 'equalto', item) | selectattr('rc', 'equalto', 0) | list | length > 0
+
+- name: Check for failed image pulls
+  set_fact:
+    failed_images: "{{ image_pull_results.results | selectattr('rc', 'ne', 0) | map(attribute='item') | list }}"
+
+- name: Fail if any images failed to pull
+  fail:
+    msg: "Failed to pre-load {{ failed_images | length }} image(s): {{ failed_images | join(', ') }}"
+  when: failed_images | length > 0
+
+- name: Count successfully pulled images
+  set_fact:
+    pulled_count: "{{ image_pull_results.results | selectattr('rc', 'equalto', 0) | list | length }}"
+
+- name: Display pre-load summary
+  debug:
+    msg:
+      - "Successfully pre-loaded {{ pulled_count }} Kubernetes image(s) for version v{{ k8s_pure_version }}"
+      - "Images: {{ k8s_image_list | join(', ') }}"
+

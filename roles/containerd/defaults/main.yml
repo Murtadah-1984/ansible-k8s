@@ -1,0 +1,15 @@
+---
+# Default variables for containerd role
+
+# Containerd version (package version from Docker repository)
+containerd_version: "2.2.0"
+
+# CNI plugins version
+cni_version: "v1.3.0"
+
+# Sandbox image for Kubernetes
+containerd_sandbox_image: "registry.k8s.io/pause:3.10"
+
+# Use minimal config instead of default
+use_minimal_config: false
+

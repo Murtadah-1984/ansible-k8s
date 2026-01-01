@@ -1,0 +1,22 @@
+---
+# Default variables for kubernetes role
+
+# Kubernetes version (minor like 1.34 or full like 1.34.0)
+# Minor version will auto-select latest patch
+kubernetes_version: "1.34"
+
+# crictl version
+crictl_version: "v1.34.0"
+
+# Pod network CIDR
+pod_network_cidr: "10.244.0.0/16"
+
+# Service CIDR
+service_cidr: "10.96.0.0/12"
+
+# Cluster name
+cluster_name: "kubernetes"
+
+# Kubelet pod PIDs limit (CIS 4.2.13)
+kubelet_pod_pids_limit: "4096"
+

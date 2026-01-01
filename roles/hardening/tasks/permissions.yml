@@ -1,0 +1,22 @@
+---
+# File Permissions
+# Sets correct file permissions per CIS STIG UBTU-24-400000 series
+
+# ============================================================================
+# FILE PERMISSIONS
+# ============================================================================
+# Set correct file permissions per CIS STIG UBTU-24-400000 series
+
+- name: Set correct file permissions (UBTU-24-400000 series)
+  file:
+    path: "{{ item.path }}"
+    mode: "{{ item.mode }}"
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ item.group | default('root') }}"
+  loop:
+    - { path: /etc/passwd, mode: '0644', owner: root, group: root }
+    - { path: /etc/shadow, mode: '0640', owner: root, group: shadow }
+    - { path: /etc/group, mode: '0644', owner: root, group: root }
+    - { path: /etc/gshadow, mode: '0640', owner: root, group: shadow }
+    - { path: /etc/ssh/sshd_config, mode: '0600', owner: root, group: root }
+

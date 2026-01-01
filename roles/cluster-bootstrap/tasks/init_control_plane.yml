@@ -1,0 +1,191 @@
+---
+# Initialize First Control Plane Node
+# This task file handles the initialization of the first control plane node
+
+- name: Check if cluster is already initialized
+  stat:
+    path: /etc/kubernetes/admin.conf
+  register: admin_conf_exists
+  changed_when: false
+
+- name: Fail if cluster already initialized
+  assert:
+    that:
+      - not admin_conf_exists.stat.exists
+    fail_msg: "Cluster already initialized. Remove /etc/kubernetes/admin.conf to reinitialize."
+    success_msg: "Cluster not initialized, proceeding with bootstrap"
+
+- name: Create kubeadm config directory
+  file:
+    path: /etc/kubernetes
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Generate kubeadm init configuration
+  template:
+    src: kubeadm-init-config.yaml.j2
+    dest: /etc/kubernetes/kubeadm-config.yaml
+    owner: root
+    group: root
+    mode: '0600'
+  when: not admin_conf_exists.stat.exists
+
+- name: Generate certificate key for HA setup
+  command: kubeadm certs certificate-key
+  register: cert_key
+  changed_when: false
+  no_log: true
+  when:
+    - not admin_conf_exists.stat.exists
+    - groups['control'] | length > 1
+
+- name: Initialize Kubernetes cluster
+  block:
+    - name: Run kubeadm init
+      shell: |
+        kubeadm init \
+        --config=/etc/kubernetes/kubeadm-config.yaml \
+        {% if groups['control'] | length > 1 %}--upload-certs \
+        --certificate-key={{ cert_key.stdout | trim if cert_key.stdout is defined else '' }}{% endif %}
+      register: kubeadm_init
+      async: 600
+      poll: 10
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Wait for kubeadm init to complete
+      async_status:
+        jid: "{{ kubeadm_init.ansible_job_id }}"
+      register: init_job_result
+      until: init_job_result.finished
+      retries: 60
+      delay: 10
+
+    - name: Verify kubeadm init succeeded
+      assert:
+        that:
+          - init_job_result.finished == true
+          - init_job_result.rc == 0
+        fail_msg: "kubeadm init failed. Check logs for details."
+        success_msg: "kubeadm init completed successfully"
+  rescue:
+    - name: Handle initialization failure
+      debug:
+        msg:
+          - "======================================================"
+          - "ERROR: Kubernetes cluster initialization failed!"
+          - "======================================================"
+          - "Check the following for troubleshooting:"
+          - "  1. Verify all prerequisites are met"
+          - "  2. Check kubelet and containerd logs"
+          - "  3. Verify network connectivity"
+          - "  4. Review kubeadm init output above"
+          - ""
+          - "To retry, remove /etc/kubernetes/admin.conf and run again"
+          - "======================================================"
+    - name: Display kubeadm init error output
+      debug:
+        var: init_job_result.stderr
+      when: init_job_result.stderr is defined
+    - fail:
+        msg: "Cluster initialization failed. See error messages above."
+  when: not admin_conf_exists.stat.exists
+
+- name: Display kubeadm join command for control plane
+  debug:
+    msg: "{{ init_job_result.stdout_lines | select('match', 'kubeadm join') | list | first | default('Check kubeadm init output') }}"
+  when: not admin_conf_exists.stat.exists
+
+- name: Display kubeadm join command for workers
+  debug:
+    msg: "{{ init_job_result.stdout_lines | select('match', 'kubeadm join') | list | last | default('Check kubeadm init output') }}"
+  when: not admin_conf_exists.stat.exists
+
+- name: Extract join commands
+  set_fact:
+    control_plane_join: "{{ init_job_result.stdout_lines | select('match', '.*--control-plane.*') | list | first | default('') }}"
+    worker_join: "{{ init_job_result.stdout_lines | select('match', '.*kubeadm join.*') | reject('match', '.*--control-plane.*') | list | first | default('') }}"
+  when:
+    - not admin_conf_exists.stat.exists
+    - init_job_result.stdout_lines is defined
+
+- name: Save control plane join command
+  copy:
+    content: "{{ control_plane_join }}"
+    dest: /tmp/control-plane-join-command.sh
+    mode: '0600'
+    owner: root
+    group: root
+  when:
+    - not admin_conf_exists.stat.exists
+    - control_plane_join is defined
+    - control_plane_join != ''
+
+- name: Save worker join command
+  copy:
+    content: "{{ worker_join }}"
+    dest: /tmp/worker-join-command.sh
+    mode: '0600'
+    owner: root
+    group: root
+  when:
+    - not admin_conf_exists.stat.exists
+    - worker_join is defined
+    - worker_join != ''
+
+- name: Set up kubectl for root user
+  block:
+    - name: Create .kube directory
+      file:
+        path: /root/.kube
+        state: directory
+        mode: '0700'
+        owner: root
+        group: root
+
+    - name: Copy admin.conf to .kube/config
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /root/.kube/config
+        remote_src: true
+        mode: '0600'
+        owner: root
+        group: root
+
+    - name: Set KUBECONFIG environment variable
+      lineinfile:
+        path: /root/.bashrc
+        line: 'export KUBECONFIG=/root/.kube/config'
+        create: true
+  when: admin_conf_exists.stat.exists or (init_job_result.finished is defined and init_job_result.finished)
+
+- name: Wait for API server to be ready
+  block:
+    - name: Check API server health
+      uri:
+        url: "https://{{ ansible_default_ipv4.address }}:6443/healthz"
+        method: GET
+        validate_certs: false
+        status_code: [200, 401, 403]
+      register: api_server_health
+      until: api_server_health.status in [200, 401, 403]
+      retries: 30
+      delay: 10
+  rescue:
+    - name: Handle API server health check failure
+      debug:
+        msg:
+          - "WARNING: API server health check failed or timed out"
+          - "The cluster may still be initializing. Verify manually with:"
+          - "  kubectl cluster-info"
+      failed_when: false
+
+- name: Remove taint from master node (allow pods on control plane)
+  command: kubectl taint nodes {{ inventory_hostname }} node-role.kubernetes.io/control-plane:NoSchedule-
+  when: allow_pods_on_control_plane
+  ignore_errors: true
+  environment:
+    KUBECONFIG: /root/.kube/config
+

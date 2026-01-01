@@ -1,0 +1,8 @@
+---
+# Handlers for pxe-dnsmasq role
+
+- name: restart dnsmasq
+  systemd:
+    name: dnsmasq
+    state: restarted
+

@@ -1,0 +1,37 @@
+---
+# PXE Server Setup Playbook
+# This playbook sets up a complete PXE boot server for Ubuntu automated installation
+#
+# Prerequisites:
+# - Ubuntu 22.04 LTS PXE server
+# - SSH access to PXE server
+# - Network connectivity
+# - Sufficient disk space for Ubuntu ISO (~4GB)
+#
+# Usage:
+#   ansible-playbook -i inventory.ini pxe-server.yml
+#
+# Variables:
+#   - pxe_interface: Network interface for PXE (default: auto-detected)
+#   - pxe_ip: PXE server IP (default: auto-detected)
+#   - dhcp_range_start: DHCP range start (default: 192.168.100.50)
+#   - dhcp_range_end: DHCP range end (default: 192.168.100.100)
+#   - ubuntu_version: Ubuntu version (default: 22.04)
+#   - pxe_hostname: Hostname for installed systems (default: ubuntu-node)
+#   - pxe_user: Username for installed systems (default: admin)
+#   - pxe_password_hash: Password hash (REQUIRED - use mkpasswd -m sha-512)
+
+- name: PXE Server Setup
+  hosts: pxe
+  become: true
+  gather_facts: true
+
+  roles:
+    - pxe-common
+    - pxe-dnsmasq
+    - pxe-tftp
+    - pxe-ubuntu-netboot
+    - pxe-boot
+    - pxe-nginx
+    - pxe-autoinstall
+

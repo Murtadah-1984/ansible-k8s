@@ -1,0 +1,156 @@
+---
+# Kubernetes Repository Setup
+# Cleans up old repositories and sets up new Kubernetes repository
+
+- name: Find Kubernetes repository files to remove
+  find:
+    paths: /etc/apt/sources.list.d
+    patterns:
+      - "*kubernetes*"
+      - "*k8s*"
+    file_type: file
+  register: k8s_repo_files
+  failed_when: false
+  changed_when: false
+
+- name: Remove Kubernetes repository files
+  file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ k8s_repo_files.files | default([]) }}"
+  failed_when: false
+
+- name: Remove Kubernetes repository lines from sources.list
+  lineinfile:
+    path: /etc/apt/sources.list
+    regexp: 'pkgs\.k8s\.io'
+    state: absent
+  failed_when: false
+
+- name: Find all files in sources.list.d that might contain Kubernetes repos
+  find:
+    paths: /etc/apt/sources.list.d
+    file_type: file
+  register: sources_list_d_files
+  failed_when: false
+  changed_when: false
+
+- name: Remove Kubernetes repository lines from sources.list.d files
+  lineinfile:
+    path: "{{ item.path }}"
+    regexp: 'pkgs\.k8s\.io'
+    state: absent
+  loop: "{{ sources_list_d_files.files | default([]) }}"
+  failed_when: false
+
+- name: Verify no Kubernetes repository entries remain
+  shell: |
+    grep -r "pkgs\.k8s\.io" /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null || echo "No entries found"
+  register: k8s_repo_check
+  changed_when: false
+  failed_when: false
+
+- name: Display remaining Kubernetes repository entries (if any)
+  debug:
+    msg: "WARNING: Found remaining Kubernetes repository entries: {{ k8s_repo_check.stdout }}"
+  when: k8s_repo_check.stdout != "No entries found" and k8s_repo_check.stdout != ""
+
+- name: Clear APT cache after cleanup
+  apt:
+    update_cache: false
+    cache_valid_time: 0
+  failed_when: false
+
+- name: Ensure apt keyring directory exists
+  file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+
+- name: Ensure curl and gpg are installed
+  apt:
+    name:
+      - curl
+      - gnupg
+    state: present
+    update_cache: false
+  failed_when: false
+
+- name: Download Kubernetes GPG key (ASCII format) - try primary URL
+  get_url:
+    url: https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/deb/Release.key
+    dest: /tmp/kubernetes-release.key
+    mode: '0644'
+  register: gpg_download_primary
+  failed_when: false
+
+- name: Download Kubernetes GPG key (ASCII format) - try alternative URL
+  get_url:
+    url: https://prod-cdn.packages.k8s.io/repositories/isv:/kubernetes:/core:/stable:/v{{ kubernetes_version }}/deb/Release.key
+    dest: /tmp/kubernetes-release.key
+    mode: '0644'
+  when: gpg_download_primary.failed
+  register: gpg_download_alt
+  failed_when: false
+
+- name: Fail if GPG key download failed
+  fail:
+    msg: "Failed to download Kubernetes GPG key from both primary and alternative URLs"
+  when: gpg_download_primary.failed and (gpg_download_alt.failed | default(true))
+
+- name: Convert GPG key to binary format for keyrings directory
+  shell: |
+    gpg --dearmor < /tmp/kubernetes-release.key > /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    chmod 644 /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  register: gpg_convert_keyrings
+
+- name: Also add GPG key to trusted keyring (fallback for compatibility)
+  shell: |
+    gpg --dearmor < /tmp/kubernetes-release.key > /etc/apt/trusted.gpg.d/kubernetes-apt-keyring.gpg
+    chmod 644 /etc/apt/trusted.gpg.d/kubernetes-apt-keyring.gpg
+  failed_when: false
+  changed_when: true
+
+- name: Verify GPG key contains expected key ID
+  shell: |
+    gpg --no-default-keyring --keyring /etc/apt/keyrings/kubernetes-apt-keyring.gpg --list-keys 2>/dev/null | grep -i "234654DA9A296436" || echo "Key ID not found in keyring"
+  register: gpg_key_check
+  changed_when: false
+  failed_when: false
+
+- name: Display GPG key information
+  debug:
+    msg: "GPG key check result: {{ gpg_key_check.stdout }}"
+
+- name: Clean up temporary key file
+  file:
+    path: /tmp/kubernetes-release.key
+    state: absent
+  failed_when: false
+
+- name: Verify GPG key was downloaded and is valid
+  stat:
+    path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  register: gpg_key_stat
+
+- name: Verify GPG key file is not empty
+  assert:
+    that:
+      - gpg_key_stat.stat.exists
+      - gpg_key_stat.stat.size > 0
+    fail_msg: "Kubernetes GPG key download failed or file is empty"
+    success_msg: "Kubernetes GPG key downloaded successfully ({{ gpg_key_stat.stat.size }} bytes)"
+
+- name: Create Kubernetes repository file directly (ensures correct format)
+  copy:
+    content: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/deb/ /\n"
+    dest: /etc/apt/sources.list.d/kubernetes.list
+    mode: '0644'
+    owner: root
+    group: root
+
+- name: Update APT cache after repository addition
+  apt:
+    update_cache: true
+    cache_valid_time: 3600
+

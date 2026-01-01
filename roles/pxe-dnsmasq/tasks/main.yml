@@ -1,0 +1,18 @@
+---
+# Configure dnsmasq for PXE boot
+
+- name: Deploy dnsmasq config
+  template:
+    src: dnsmasq.conf.j2
+    dest: /etc/dnsmasq.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart dnsmasq
+
+- name: Ensure dnsmasq running
+  systemd:
+    name: dnsmasq
+    state: started
+    enabled: true
+

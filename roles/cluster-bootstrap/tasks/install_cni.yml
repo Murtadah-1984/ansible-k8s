@@ -1,0 +1,50 @@
+---
+# Install CNI Plugin
+# This task file installs the selected CNI plugin (Calico or Flannel)
+
+- name: Check if CNI is already installed
+  command: kubectl get pods -n kube-system | grep -E "(calico|flannel|weave|cilium)" | grep Running
+  register: cni_running
+  changed_when: false
+  failed_when: false
+  environment:
+    KUBECONFIG: /root/.kube/config
+
+- name: Install Calico CNI
+  shell: |
+    kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/{{ calico_version }}/manifests/calico.yaml
+  when:
+    - cni_plugin == 'calico'
+    - cni_running.rc != 0
+  environment:
+    KUBECONFIG: /root/.kube/config
+
+- name: Install Flannel CNI
+  shell: |
+    kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+  when:
+    - cni_plugin == 'flannel'
+    - cni_running.rc != 0
+  environment:
+    KUBECONFIG: /root/.kube/config
+
+- name: Wait for CNI pods to be ready
+  command: kubectl get pods -n kube-system -l k8s-app={{ 'calico-node' if cni_plugin == 'calico' else 'kube-flannel-ds' }} --field-selector=status.phase=Running
+  register: cni_pods
+  until: cni_pods.stdout_lines | length > 0
+  retries: 30
+  delay: 10
+  when: cni_running.rc != 0
+  ignore_errors: true
+  environment:
+    KUBECONFIG: /root/.kube/config
+
+- name: Wait for all nodes to be Ready
+  command: kubectl get nodes --no-headers | grep -v Ready | wc -l
+  register: not_ready_nodes
+  until: not_ready_nodes.stdout | trim == '0'
+  retries: 30
+  delay: 10
+  environment:
+    KUBECONFIG: /root/.kube/config
+

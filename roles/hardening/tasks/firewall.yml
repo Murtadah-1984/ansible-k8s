@@ -1,0 +1,95 @@
+---
+# Firewall Configuration
+# Configures UFW firewall per CIS STIG UBTU-24-100310
+# Kubernetes ports per https://kubernetes.io/docs/reference/networking/ports-and-protocols/
+
+# ============================================================================
+# FIREWALL CONFIGURATION
+# ============================================================================
+# Configure UFW firewall per CIS STIG UBTU-24-100310
+# Reference: https://kubernetes.io/docs/reference/networking/ports-and-protocols/
+
+- name: Enable UFW firewall with default deny policy (UBTU-24-100310)
+  ufw:
+    state: enabled
+    policy: deny
+
+- name: Allow SSH through UFW firewall
+  ufw:
+    rule: allow
+    port: "22"
+    proto: tcp
+
+# ============================================================================
+# KUBERNETES CONTROL PLANE PORTS
+# ============================================================================
+# Control plane ports per Kubernetes documentation:
+# - TCP 6443: Kubernetes API server
+# - TCP 2379-2380: etcd server client API
+# - TCP 10250: Kubelet API
+# - TCP 10259: kube-scheduler
+# - TCP 10257: kube-controller-manager
+
+- name: Allow Kubernetes control plane ports through UFW firewall
+  ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  loop: "{{ kubernetes_control_plane_ports | default([]) }}"
+  when: inventory_hostname in groups.get('control', [])
+
+# ============================================================================
+# KUBERNETES WORKER NODE PORTS
+# ============================================================================
+# Worker node ports per Kubernetes documentation:
+# - TCP 10250: Kubelet API
+# - TCP 10256: kube-proxy
+# - TCP/UDP 30000-32767: NodePort Services (default range)
+
+- name: Allow Kubernetes worker node TCP ports through UFW firewall
+  ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  loop: "{{ kubernetes_worker_ports_tcp | default([]) }}"
+  when: inventory_hostname in groups.get('workers', [])
+
+- name: Allow Kubernetes worker node UDP ports through UFW firewall
+  ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: udp
+  loop: "{{ kubernetes_worker_ports_udp | default([]) }}"
+  when: inventory_hostname in groups.get('workers', [])
+
+# ============================================================================
+# CEPH MONITOR PORTS
+# ============================================================================
+# Ceph Monitor ports per Red Hat Ceph Storage documentation:
+# - TCP 3300: Preferred port for Ceph clients and daemons connecting to Monitor
+# - TCP 6789: Fallback port if 3300 fails
+# Reference: https://docs.redhat.com/en/documentation/red_hat_ceph_storage/5/html/configuration_guide/ceph-firewall-ports_conf
+
+- name: Allow Ceph Monitor ports through UFW firewall
+  ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  loop: "{{ ceph_monitor_ports | default([]) }}"
+  when: inventory_hostname in groups.get('mon', [])
+
+# ============================================================================
+# CEPH OSD PORTS
+# ============================================================================
+# Ceph OSD ports per Red Hat Ceph Storage documentation:
+# - TCP 6800-7300: Ceph OSDs port range
+# Reference: https://docs.redhat.com/en/documentation/red_hat_ceph_storage/5/html/configuration_guide/ceph-firewall-ports_conf
+
+- name: Allow Ceph OSD ports through UFW firewall
+  ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  loop: "{{ ceph_osd_ports | default([]) }}"
+  when: inventory_hostname in groups.get('osd', [])
+

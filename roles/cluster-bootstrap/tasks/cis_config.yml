@@ -1,0 +1,31 @@
+---
+# Apply CIS-Compliant Cluster Configuration
+# This task file applies CIS-compliant security configurations to the cluster
+
+- name: Create kube-system namespace if not exists
+  command: kubectl create namespace kube-system --dry-run=client -o yaml | kubectl apply -f -
+  environment:
+    KUBECONFIG: /root/.kube/config
+  changed_when: false
+  ignore_errors: true
+
+- name: Apply Pod Security Standards (Restricted)
+  shell: |
+    kubectl label --overwrite namespace kube-system pod-security.kubernetes.io/enforce=restricted
+    kubectl label --overwrite namespace kube-system pod-security.kubernetes.io/audit=restricted
+    kubectl label --overwrite namespace kube-system pod-security.kubernetes.io/warn=restricted
+  environment:
+    KUBECONFIG: /root/.kube/config
+  ignore_errors: true
+
+- name: Display cluster status
+  command: kubectl cluster-info
+  environment:
+    KUBECONFIG: /root/.kube/config
+  register: cluster_info
+  changed_when: false
+
+- name: Show cluster info
+  debug:
+    var: cluster_info.stdout_lines
+

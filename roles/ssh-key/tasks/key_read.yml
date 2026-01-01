@@ -1,0 +1,32 @@
+---
+# SSH Key Reading
+# Reads SSH public key from control node
+
+- name: Determine SSH public key path
+  set_fact:
+    ssh_key_path: "{{ lookup('env', 'HOME') }}/.ssh/id_ed25519.pub"
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Read SSH public key from control node
+  slurp:
+    src: "{{ ssh_key_path }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  register: ssh_key_file
+  failed_when: false
+
+- name: Fail if SSH key file not found
+  fail:
+    msg: "SSH public key not found at {{ ssh_key_path }}. Please ensure the key exists on the control node."
+  when: not ssh_key_file.content is defined
+  run_once: true
+
+- name: Decode SSH public key content
+  set_fact:
+    ssh_public_key: "{{ ssh_key_file.content | b64decode }}"
+  run_once: true
+  when: ssh_key_file.content is defined
+

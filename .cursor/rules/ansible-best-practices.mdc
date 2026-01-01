@@ -1,0 +1,632 @@
+---
+description: Ansible best practices and coding standards for playbooks, roles, and tasks
+globs: "**/*.yml,**/*.yaml"
+alwaysApply: true
+---
+# Ansible Best Practices
+
+This document outlines the best practices and coding standards for all Ansible playbooks, roles, and tasks in this project. All Ansible code must follow these guidelines to ensure maintainability, security, and reliability.
+
+## Playbook Structure
+
+### Header Documentation
+
+Every playbook must start with a comprehensive header:
+
+```yaml
+---
+# Playbook Name
+# Brief description of what the playbook does
+#
+# Prerequisites:
+# - List of prerequisites
+# - Required access/permissions
+#
+# Usage:
+#   ansible-playbook -i inventory.ini playbook.yml
+#
+# Variables:
+#   - variable_name: Description (default: value)
+#   - another_var: Description (default: value)
+```
+
+### Play Organization
+
+**✅ GOOD:**
+```yaml
+- name: Descriptive Play Name
+  hosts: target_group
+  become: true
+  gather_facts: true
+  serial: "{{ serial_count | default(1) }}"
+  
+  vars:
+    # Play-specific variables
+    local_var: value
+  
+  roles:
+    - role_name
+```
+
+**❌ BAD:**
+```yaml
+- hosts: all
+  tasks:
+    - name: do stuff
+```
+
+### Task Naming
+
+**✅ GOOD:**
+```yaml
+- name: Install and configure Nginx web server
+  package:
+    name: nginx
+    state: present
+```
+
+**❌ BAD:**
+```yaml
+- name: install nginx
+  package:
+    name: nginx
+```
+
+## Task Organization
+
+### Use Roles for Reusability
+
+**✅ GOOD:**
+```yaml
+roles:
+  - common
+  - hardening
+  - kubernetes
+```
+
+**❌ BAD:**
+```yaml
+tasks:
+  - name: Install package 1
+  - name: Install package 2
+  - name: Configure service 1
+  - name: Configure service 2
+  # 200+ more tasks...
+```
+
+### Logical Task Grouping
+
+Group related tasks together with descriptive comments:
+
+```yaml
+tasks:
+  # ============================================================================
+  # PREREQUISITE CHECKS
+  # ============================================================================
+  - name: Verify required files exist
+    stat:
+      path: "{{ item }}"
+    loop:
+      - /etc/hosts
+      - /etc/resolv.conf
+    register: file_check
+
+  # ============================================================================
+  # PACKAGE INSTALLATION
+  # ============================================================================
+  - name: Install required packages
+    package:
+      name: "{{ item }}"
+      state: present
+    loop:
+      - package1
+      - package2
+```
+
+## Idempotency
+
+### Always Use Idempotent Modules
+
+**✅ GOOD:**
+```yaml
+- name: Ensure directory exists
+  file:
+    path: /etc/myapp
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+```
+
+**❌ BAD:**
+```yaml
+- name: Create directory
+  command: mkdir -p /etc/myapp
+```
+
+### Use `changed_when` for Commands
+
+**✅ GOOD:**
+```yaml
+- name: Check cluster status
+  command: kubectl cluster-info
+  register: cluster_status
+  changed_when: false
+  failed_when: false
+```
+
+**❌ BAD:**
+```yaml
+- name: Check cluster status
+  command: kubectl cluster-info
+  register: cluster_status
+```
+
+### Use `creates` or `removes` for Commands
+
+**✅ GOOD:**
+```yaml
+- name: Initialize cluster if not exists
+  command: kubeadm init
+  args:
+    creates: /etc/kubernetes/admin.conf
+```
+
+**❌ BAD:**
+```yaml
+- name: Initialize cluster
+  command: kubeadm init
+```
+
+## Variable Management
+
+### Use Defaults in Roles
+
+**✅ GOOD:**
+```yaml
+# roles/myrole/defaults/main.yml
+package_name: mypackage
+service_port: 8080
+```
+
+**❌ BAD:**
+```yaml
+# Hardcoded in tasks
+- name: Install package
+  package:
+    name: mypackage  # Hardcoded value
+```
+
+### Variable Naming
+
+- Use lowercase with underscores
+- Be descriptive
+- Group related variables
+
+**✅ GOOD:**
+```yaml
+kubernetes_version: "1.28.0"
+pod_network_cidr: "10.244.0.0/16"
+control_plane_endpoint: "k8s.example.com:6443"
+```
+
+**❌ BAD:**
+```yaml
+k8s_ver: "1.28.0"
+pod_cidr: "10.244.0.0/16"
+endpoint: "k8s.example.com:6443"
+```
+
+### Use `default()` Filter
+
+**✅ GOOD:**
+```yaml
+- name: Install package
+  package:
+    name: "{{ package_name | default('default-package') }}"
+```
+
+**❌ BAD:**
+```yaml
+- name: Install package
+  package:
+    name: "{{ package_name }}"  # Fails if undefined
+```
+
+## Error Handling
+
+### Use `failed_when` Appropriately
+
+**✅ GOOD:**
+```yaml
+- name: Check if service exists
+  command: systemctl status myservice
+  register: service_status
+  failed_when: false
+  changed_when: false
+
+- name: Start service if it exists
+  systemd:
+    name: myservice
+    state: started
+  when: service_status.rc == 0
+```
+
+**❌ BAD:**
+```yaml
+- name: Check if service exists
+  command: systemctl status myservice
+  register: service_status
+  # Fails if service doesn't exist
+```
+
+### Use `rescue` Blocks
+
+**✅ GOOD:**
+```yaml
+- name: Attempt risky operation
+  block:
+    - name: Perform operation
+      command: risky-command
+  rescue:
+    - name: Handle failure
+      debug:
+        msg: "Operation failed, continuing with fallback"
+    - name: Fallback operation
+      command: fallback-command
+  always:
+    - name: Cleanup
+      file:
+        path: /tmp/tempfile
+        state: absent
+```
+
+## Security Best Practices
+
+### Never Use `no_log: false` for Sensitive Data
+
+**✅ GOOD:**
+```yaml
+- name: Set password
+  user:
+    name: myuser
+    password: "{{ vaulted_password }}"
+  no_log: true
+```
+
+**❌ BAD:**
+```yaml
+- name: Set password
+  user:
+    name: myuser
+    password: "{{ vaulted_password }}"
+  # Password visible in logs!
+```
+
+### Use Ansible Vault for Secrets
+
+**✅ GOOD:**
+```yaml
+# group_vars/all/vault.yml (encrypted)
+api_key: !vault |
+  $ANSIBLE_VAULT;1.1;AES256
+  ...
+```
+
+**❌ BAD:**
+```yaml
+# group_vars/all/main.yml
+api_key: "secret-key-12345"  # Plain text!
+```
+
+### Limit Privilege Escalation
+
+**✅ GOOD:**
+```yaml
+- name: User-level task
+  hosts: all
+  become: false
+  tasks:
+    - name: Check user permissions
+      command: whoami
+```
+
+**❌ BAD:**
+```yaml
+- name: All tasks as root
+  hosts: all
+  become: true
+  tasks:
+    - name: Check user
+      command: whoami  # Unnecessary root access
+```
+
+## Performance Optimization
+
+### Use `serial` for Rolling Updates
+
+**✅ GOOD:**
+```yaml
+- name: Update cluster nodes
+  hosts: workers
+  serial: "{{ update_serial | default(1) }}"
+  tasks:
+    - name: Restart service
+      systemd:
+        name: myservice
+        state: restarted
+```
+
+**❌ BAD:**
+```yaml
+- name: Update all nodes at once
+  hosts: workers
+  tasks:
+    - name: Restart service
+      systemd:
+        name: myservice
+        state: restarted
+      # All nodes restart simultaneously!
+```
+
+### Use `throttle` for Rate Limiting
+
+**✅ GOOD:**
+```yaml
+- name: API calls with rate limiting
+  uri:
+    url: "https://api.example.com/endpoint"
+  throttle: 10  # Max 10 concurrent requests
+```
+
+### Use `async` for Long-Running Tasks
+
+**✅ GOOD:**
+```yaml
+- name: Long-running operation
+  command: long-running-command
+  async: 3600
+  poll: 10
+  register: async_result
+```
+
+## Conditionals and Loops
+
+### Use `when` for Conditionals
+
+**✅ GOOD:**
+```yaml
+- name: Install package on Debian
+  apt:
+    name: package
+    state: present
+  when: ansible_os_family == "Debian"
+
+- name: Install package on RedHat
+  yum:
+    name: package
+    state: present
+  when: ansible_os_family == "RedHat"
+```
+
+**❌ BAD:**
+```yaml
+- name: Install package
+  command: |
+    if [ -f /etc/debian_version ]; then
+      apt-get install package
+    else
+      yum install package
+    fi
+```
+
+### Use `loop` Instead of `with_*`
+
+**✅ GOOD:**
+```yaml
+- name: Install multiple packages
+  package:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - package1
+    - package2
+    - package3
+```
+
+**❌ BAD:**
+```yaml
+- name: Install multiple packages
+  package:
+    name: "{{ item }}"
+    state: present
+  with_items:
+    - package1
+    - package2
+    - package3
+```
+
+## Handlers
+
+### Use Handlers for Service Restarts
+
+**✅ GOOD:**
+```yaml
+tasks:
+  - name: Update configuration
+    template:
+      src: config.j2
+      dest: /etc/myapp/config.conf
+    notify: restart service
+
+handlers:
+  - name: restart service
+    systemd:
+      name: myservice
+      state: restarted
+```
+
+**❌ BAD:**
+```yaml
+tasks:
+  - name: Update configuration
+    template:
+      src: config.j2
+      dest: /etc/myapp/config.conf
+  
+  - name: Restart service
+    systemd:
+      name: myservice
+      state: restarted
+    # Restarts even if config didn't change!
+```
+
+## Role Structure
+
+### Standard Role Directory Structure
+
+```
+roles/
+└── role_name/
+    ├── defaults/
+    │   └── main.yml      # Default variables
+    ├── vars/
+    │   └── main.yml      # Role-specific variables
+    ├── tasks/
+    │   └── main.yml      # Main tasks
+    ├── handlers/
+    │   └── main.yml      # Handlers
+    ├── templates/
+    │   └── config.j2     # Jinja2 templates
+    ├── files/
+    │   └── static_file   # Static files
+    ├── meta/
+    │   └── main.yml      # Dependencies
+    └── README.md         # Role documentation
+```
+
+### Role Dependencies
+
+**✅ GOOD:**
+```yaml
+# roles/myrole/meta/main.yml
+dependencies:
+  - role: common
+    vars:
+      some_var: value
+  - role: hardening
+```
+
+## Templates
+
+### Use Jinja2 Templates
+
+**✅ GOOD:**
+```yaml
+- name: Generate configuration
+  template:
+    src: config.j2
+    dest: /etc/myapp/config.conf
+    mode: '0644'
+    owner: root
+    group: root
+  notify: restart service
+```
+
+### Template Best Practices
+
+```jinja2
+{# config.j2 #}
+# Configuration file for {{ app_name }}
+# Generated by Ansible on {{ ansible_date_time.iso8601 }}
+
+{% if enable_feature %}
+feature_enabled = true
+{% else %}
+feature_enabled = false
+{% endif %}
+
+{% for item in items %}
+item_{{ loop.index }} = {{ item }}
+{% endfor %}
+```
+
+## Documentation
+
+### Task Comments
+
+**✅ GOOD:**
+```yaml
+tasks:
+  # Install base packages required for Kubernetes
+  - name: Install Kubernetes dependencies
+    package:
+      name: "{{ item }}"
+      state: present
+    loop:
+      - kubelet
+      - kubeadm
+      - kubectl
+```
+
+### README Files
+
+Every role should have a README.md:
+
+```markdown
+# Role Name
+
+Brief description of the role.
+
+## Requirements
+
+- Ansible 2.9+
+- OS requirements
+- Dependencies
+
+## Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| var1 | value1 | Description |
+| var2 | value2 | Description |
+
+## Example Playbook
+
+```yaml
+- hosts: all
+  roles:
+    - role_name
+      vars:
+        var1: custom_value
+```
+
+## License
+
+MIT
+```
+
+## Checklist
+
+When creating or editing Ansible code, ensure:
+
+- [ ] Playbook has comprehensive header documentation
+- [ ] All tasks have descriptive names
+- [ ] Tasks are idempotent
+- [ ] Variables use `default()` filter when appropriate
+- [ ] Sensitive data uses `no_log: true` or Ansible Vault
+- [ ] `become: true` only when necessary
+- [ ] Handlers used for service restarts
+- [ ] `serial` used for rolling updates
+- [ ] `loop` used instead of deprecated `with_*`
+- [ ] Error handling with `failed_when` and `rescue` blocks
+- [ ] Role structure follows standard directory layout
+- [ ] README.md exists for each role
+- [ ] Templates use proper Jinja2 syntax
+- [ ] Comments explain complex logic
+
+## References
+
+- [Ansible Best Practices](https://docs.ansible.com/ansible/latest/user_guide/playbooks_best_practices.html)
+- [Ansible Vault](https://docs.ansible.com/ansible/latest/user_guide/vault.html)
+- [Ansible Idempotency](https://docs.ansible.com/ansible/latest/user_guide/playbooks_intro.html#idempotency)

@@ -1,0 +1,69 @@
+---
+# Containerd Cleanup
+# Cleans containerd overlays and restarts service
+
+# =============================================================================
+# 6) CONTAINERD RUNTIME CLEANUP (SAFE - only overlays, not entire directory)
+# =============================================================================
+- name: Clean containerd overlays (safe)
+  ansible.builtin.file:
+    path: /var/lib/containerd/io.containerd.snapshotter.v1.overlayfs
+    state: absent
+  failed_when: false
+
+- name: Reload systemd daemon
+  ansible.builtin.systemd:
+    daemon_reload: yes
+
+- name: Reset failed systemd units
+  ansible.builtin.command:
+    cmd: systemctl reset-failed
+  failed_when: false
+
+- name: Enable containerd service
+  ansible.builtin.systemd:
+    name: containerd
+    enabled: yes
+  failed_when: false
+
+- name: Start containerd service
+  ansible.builtin.systemd:
+    name: containerd
+    state: started
+  failed_when: false
+
+# =============================================================================
+# 7) OPTIONAL: Clean containerd/crictl images and containers (optional)
+# =============================================================================
+- name: Check if crictl is available
+  ansible.builtin.command:
+    cmd: which crictl
+  register: crictl_check
+  changed_when: false
+  failed_when: false
+
+- name: Remove all containers (optional - disabled by default)
+  ansible.builtin.shell: |
+    crictl rm -a || true
+  when: crictl_check.rc == 0 and cleanup_containers | default(false)
+  failed_when: false
+
+- name: Remove all images (optional - disabled by default)
+  ansible.builtin.shell: |
+    crictl rmi -a || true
+  when: crictl_check.rc == 0 and cleanup_images | default(false)
+  failed_when: false
+
+# =============================================================================
+# 8) OPTIONAL: Remove ~/.kube config (per user request)
+# =============================================================================
+- name: Remove user kubeconfig directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /root/.kube
+    - "/home/{{ ansible_user }}/.kube"
+  when: remove_kubeconfig | default(false)
+  failed_when: false
+

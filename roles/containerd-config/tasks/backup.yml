@@ -1,0 +1,17 @@
+---
+# Configuration Backup
+# Backs up existing containerd configuration
+
+- name: Backup existing config file
+  copy:
+    src: "{{ containerd_config_path }}"
+    dest: "{{ containerd_config_path }}.bak.{{ ansible_date_time.epoch }}"
+    remote_src: true
+  when: backup_existing | default(true) and containerd_config_stat.stat.exists
+  register: backup_result
+
+- name: Display backup information
+  debug:
+    msg: "Backed up existing config to {{ containerd_config_path }}.bak.{{ ansible_date_time.epoch }}"
+  when: backup_existing | default(true) and containerd_config_stat.stat.exists and backup_result.changed
+

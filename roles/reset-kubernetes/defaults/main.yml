@@ -1,0 +1,11 @@
+---
+# Default variables for reset-kubernetes role
+
+# Safety flag - MUST be set to true to proceed
+perform_reset: false
+
+# Optional cleanup flags
+remove_kubeconfig: false
+cleanup_containers: false
+cleanup_images: false
+

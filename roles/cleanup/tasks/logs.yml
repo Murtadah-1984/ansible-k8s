@@ -1,0 +1,39 @@
+---
+# Log Cleanup
+# Removes old log files while preserving important Kubernetes logs
+
+# ============================================================================
+# LOG CLEANUP (selective - preserve important Kubernetes logs)
+# ============================================================================
+- name: Find old log files to remove (preserving Kubernetes logs)
+  find:
+    paths: /var/log
+    patterns:
+      - "*.log"
+      - "*.gz"
+    age: "+7d"
+    excludes:
+      - "*/kubelet*"
+      - "*/containerd*"
+      - "*/audit*"
+    file_type: file
+  register: old_log_files
+  failed_when: false
+
+- name: Remove old log files
+  file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ old_log_files.files | default([]) }}"
+  failed_when: false
+
+- name: Vacuum journald logs (time-based)
+  command: journalctl --vacuum-time=7d
+  changed_when: true
+  failed_when: false
+
+- name: Vacuum journald logs (size-based)
+  command: journalctl --vacuum-size=100M
+  changed_when: true
+  failed_when: false
+

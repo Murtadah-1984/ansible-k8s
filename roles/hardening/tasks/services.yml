@@ -1,0 +1,61 @@
+---
+# Service Configuration
+# Enables and starts required services per CIS STIG requirements
+
+# ============================================================================
+# SERVICE CONFIGURATION
+# ============================================================================
+# Enable and start required services per CIS STIG requirements
+
+- name: Enable and start rsyslog service (UBTU-24-100200)
+  systemd:
+    name: rsyslog
+    enabled: true
+    state: started
+
+- name: Enable and start auditd service (UBTU-24-100410)
+  systemd:
+    name: auditd
+    enabled: true
+    state: started
+
+- name: Enable and start apparmor service (UBTU-24-100510)
+  systemd:
+    name: apparmor
+    enabled: true
+    state: started
+
+- name: Enable and start chrony service (UBTU-24-100700)
+  systemd:
+    name: chronyd
+    enabled: true
+    state: started
+
+- name: Enable and start SSH service (UBTU-24-100810)
+  systemd:
+    name: ssh
+    enabled: true
+    state: started
+
+- name: Enable and start sssd service (UBTU-24-100660)
+  systemd:
+    name: sssd
+    enabled: true
+    state: started
+
+# ============================================================================
+# SERVICE DISABLING
+# ============================================================================
+# Disable unnecessary services to reduce attack surface
+
+- name: Disable unnecessary services
+  systemd:
+    name: "{{ item }}"
+    enabled: false
+    state: stopped
+  loop:
+    - snapd
+    - bluetooth
+    - avahi-daemon
+  ignore_errors: true
+

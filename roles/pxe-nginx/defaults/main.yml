@@ -1,0 +1,5 @@
+---
+# Default variables for pxe-nginx role
+
+http_root: "/var/www/html"
+

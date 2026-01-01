@@ -1,0 +1,7 @@
+---
+# Default variables for containerd-sandbox role
+
+containerd_config_path: /etc/containerd/config.toml
+sandbox_image: "{{ containerd_sandbox_image | default('registry.k8s.io/pause:3.10') }}"
+kubernetes_version: "{{ kubernetes_version | default('1.34') }}"
+

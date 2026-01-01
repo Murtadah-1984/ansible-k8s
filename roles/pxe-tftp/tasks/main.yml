@@ -1,0 +1,59 @@
+---
+# Setup TFTP server for PXE boot
+
+- name: Create TFTP directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+  loop:
+    - "{{ tftp_root }}"
+    - "{{ tftp_root }}/pxelinux.cfg"
+    - "{{ tftp_root }}/ubuntu"
+
+- name: Check if PXE BIOS files exist
+  stat:
+    path: "{{ item }}"
+  register: pxe_bios_files
+  loop:
+    - /usr/lib/PXELINUX/pxelinux.0
+    - /usr/lib/syslinux/modules/bios/ldlinux.c32
+    - /usr/lib/syslinux/modules/bios/menu.c32
+
+- name: Copy PXE BIOS files
+  copy:
+    src: "{{ item.item }}"
+    dest: "{{ tftp_root }}/"
+    remote_src: true
+    owner: root
+    group: root
+    mode: '0644'
+  loop: "{{ pxe_bios_files.results }}"
+  when: item.stat.exists
+  loop_control:
+    label: "{{ item.item | basename }}"
+
+- name: Check if UEFI GRUB file exists
+  stat:
+    path: /usr/lib/grub/x86_64-efi-signed/grubnetx64.efi.signed
+  register: grub_efi_file
+
+- name: Copy UEFI GRUB
+  copy:
+    src: /usr/lib/grub/x86_64-efi-signed/grubnetx64.efi.signed
+    dest: "{{ tftp_root }}/grubx64.efi"
+    remote_src: true
+    owner: root
+    group: root
+    mode: '0644'
+  when: grub_efi_file.stat.exists
+
+- name: Ensure TFTP service is running
+  systemd:
+    name: tftpd-hpa
+    state: started
+    enabled: true
+  failed_when: false
+

@@ -1,0 +1,75 @@
+---
+# Containerd Configuration
+# Generates and configures containerd config.toml
+
+# ============================================================================
+# CONTAINERD CONFIGURATION
+# ============================================================================
+- name: Ensure containerd config directory exists
+  file:
+    path: /etc/containerd
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Stop containerd for configuration update
+  systemd:
+    name: containerd
+    state: stopped
+  when: containerd_check.rc == 0
+  failed_when: false
+
+- name: Generate default containerd configuration
+  command: timeout 10 containerd config default
+  register: containerd_default_config
+  changed_when: true
+  failed_when: false
+  when: use_minimal_config | default(false) == false
+
+- name: Write default containerd configuration
+  copy:
+    content: "{{ containerd_default_config.stdout }}"
+    dest: /etc/containerd/config.toml
+    owner: root
+    group: root
+    mode: '0644'
+  when:
+    - use_minimal_config | default(false) == false
+    - containerd_default_config.rc == 0
+  notify: Restart containerd
+
+- name: Ensure SystemdCgroup is enabled in default config
+  replace:
+    path: /etc/containerd/config.toml
+    regexp: 'SystemdCgroup = false'
+    replace: 'SystemdCgroup = true'
+  when:
+    - use_minimal_config | default(false) == false
+    - containerd_default_config.rc == 0
+  notify: Restart containerd
+
+- name: Deploy minimal Kubernetes-ready config
+  template:
+    src: config-minimal.toml.j2
+    dest: /etc/containerd/config.toml
+    owner: root
+    group: root
+    mode: '0644'
+  when: use_minimal_config | default(true)
+  notify: Restart containerd
+
+# ============================================================================
+# CONFIGURATION VALIDATION
+# ============================================================================
+- name: Validate containerd configuration
+  command: containerd config dump
+  register: containerd_config_validation
+  changed_when: false
+  failed_when: false
+
+- name: Display configuration validation result
+  debug:
+    msg: "{{ 'Configuration validated successfully' if containerd_config_validation.rc == 0 else 'Configuration validation failed, but continuing' }}"
+  when: containerd_config_validation.rc != 0
+

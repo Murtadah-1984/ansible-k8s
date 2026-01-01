@@ -1,0 +1,16 @@
+---
+# Package Installation
+# Installs required packages and scripts
+
+- name: Install uuid-runtime
+  apt:
+    name: uuid-runtime
+    state: present
+    update_cache: true
+
+- name: Install node uniqueness script
+  copy:
+    src: verify-node-uniqueness.sh
+    dest: /usr/local/bin/verify-node-uniqueness.sh
+    mode: "0755"
+

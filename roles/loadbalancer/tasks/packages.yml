@@ -1,0 +1,52 @@
+---
+# Package Installation
+# Installs HAProxy, Keepalived, and dependencies
+
+- name: Build control_plane_nodes list from inventory
+  set_fact:
+    control_plane_nodes: "{{ control_plane_nodes | default([]) + [{'name': item, 'ip': hostvars[item]['ansible_host']}] }}"
+  loop: "{{ groups['control'] }}"
+  run_once: true
+  when: control_plane_nodes | default([]) | length == 0
+
+- name: Display installation information
+  debug:
+    msg:
+      - "======================================================"
+      - "  HAProxy & Keepalived Installation"
+      - "======================================================"
+      - ""
+      - "Target hosts: Load balancer nodes [lb]"
+      - "Services to install:"
+      - "  - HAProxy (load balancer)"
+      - "  - Keepalived (high availability)"
+      - ""
+      - "Control plane backend nodes:"
+      - "  {{ control_plane_nodes | map(attribute='name') | join(', ') }}"
+      - ""
+      - "======================================================"
+  run_once: true
+
+# =============================================================================
+# 1) INSTALL PACKAGES
+# =============================================================================
+- name: Update apt cache
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: Install HAProxy
+  apt:
+    name: haproxy
+    state: present
+
+- name: Install Keepalived
+  apt:
+    name: keepalived
+    state: present
+
+- name: Install curl (required for health check script)
+  apt:
+    name: curl
+    state: present
+

@@ -1,0 +1,57 @@
+---
+# Package Audit Checks
+# Verifies prohibited packages are removed and required packages are installed
+
+- name: Check for prohibited packages (UBTU-24-100030, UBTU-24-100040)
+  ansible.builtin.command: dpkg -l | grep -E "^(ii|hi)" | grep -E "(telnetd|rsh-server)"
+  register: prohibited_packages
+  changed_when: false
+  failed_when: false
+
+- name: Prohibited packages result
+  ansible.builtin.debug:
+    msg: "{{ 'FAIL: Prohibited packages found' if prohibited_packages.rc == 0 else 'PASS: No prohibited packages installed' }}"
+
+- name: Check systemd-timesyncd removal (UBTU-24-100010)
+  ansible.builtin.command: dpkg -l | grep systemd-timesyncd
+  register: systemd_timesyncd
+  changed_when: false
+  failed_when: false
+
+- name: systemd-timesyncd result
+  ansible.builtin.debug:
+    msg: "{{ 'FAIL: systemd-timesyncd is installed' if systemd_timesyncd.rc == 0 else 'PASS: systemd-timesyncd is not installed' }}"
+
+- name: Check ntp removal (UBTU-24-100020)
+  ansible.builtin.command: dpkg -l | grep "^ii.*ntp "
+  register: ntp_package
+  changed_when: false
+  failed_when: false
+
+- name: ntp package result
+  ansible.builtin.debug:
+    msg: "{{ 'FAIL: ntp package is installed' if ntp_package.rc == 0 else 'PASS: ntp package is not installed' }}"
+
+- name: Check required packages installation
+  ansible.builtin.command: dpkg -l | grep "{{ item }}"
+  loop:
+    - "^ii.*aide"
+    - "^ii.*auditd"
+    - "^ii.*apparmor"
+    - "^ii.*chrony"
+    - "^ii.*openssh-server"
+    - "^ii.*rsyslog"
+    - "^ii.*ufw"
+    - "^ii.*libpam-pwquality"
+  register: required_packages
+  changed_when: false
+  failed_when: false
+
+- name: Required packages results
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'PASS: ' ~ item.item ~ ' is installed' 
+         if (item.rc == 0)
+         else 'FAIL: ' ~ item.item ~ ' is not installed' }}
+  loop: "{{ required_packages.results }}"
+

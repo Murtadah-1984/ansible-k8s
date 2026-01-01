@@ -1,0 +1,27 @@
+---
+# Kernel Modules Configuration
+# Loads required kernel modules for Kubernetes
+
+# ============================================================================
+# KERNEL MODULES
+# ============================================================================
+- name: Load required kernel modules
+  modprobe:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - overlay
+    - br_netfilter
+  failed_when: false
+
+- name: Configure kernel modules to load on boot
+  copy:
+    dest: /etc/modules-load.d/k8s.conf
+    content: |
+      # Kernel modules required for Kubernetes
+      overlay
+      br_netfilter
+    mode: '0644'
+    owner: root
+    group: root
+

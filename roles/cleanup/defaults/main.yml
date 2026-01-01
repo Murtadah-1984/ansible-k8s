@@ -1,0 +1,10 @@
+---
+# Default variables for cleanup role
+
+# Log retention period (days)
+log_retention_days: 7
+
+# Journald vacuum settings
+journald_vacuum_time: "7d"
+journald_vacuum_size: "100M"
+

@@ -1,0 +1,15 @@
+---
+# OS Version Check
+# Verifies Ubuntu 24.04 LTS for STIG compliance
+
+- name: OS Version Check
+  ansible.builtin.debug:
+    msg: "Detected: {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }} ({{ ansible_facts['distribution_release'] }})"
+
+- name: PASS/WARN OS target check
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'PASS: Ubuntu 24.04 (target platform)' 
+         if (ansible_facts['distribution'] == 'Ubuntu' and ansible_facts['distribution_version'] == '24.04')
+         else 'FAIL: Not Ubuntu 24.04; baseline may differ.' }}
+

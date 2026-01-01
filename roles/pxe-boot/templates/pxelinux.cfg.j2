@@ -1,0 +1,11 @@
+DEFAULT menu.c32
+PROMPT 0
+TIMEOUT 50
+MENU TITLE Ubuntu PXE Boot
+
+LABEL ubuntu
+  MENU LABEL Install Ubuntu {{ ubuntu_version }}
+  KERNEL ubuntu/vmlinuz
+  INITRD ubuntu/initrd
+  APPEND ip=dhcp autoinstall ds=nocloud-net;s=http://{{ pxe_ip }}/autoinstall/ ---
+

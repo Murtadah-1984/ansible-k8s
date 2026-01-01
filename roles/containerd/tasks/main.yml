@@ -1,17 +1,140 @@
+---
+# Containerd Role - Main Entry Point
+# Orchestrates containerd installation and configuration
+
+# ============================================================================
+# PREREQUISITES
+# ============================================================================
+- name: Check prerequisites and install dependencies
+  include_tasks: prerequisites.yml
+
+# ============================================================================
+# REPOSITORY SETUP
+# ============================================================================
+- name: Setup Docker repository
+  include_tasks: repository.yml
+
+# ============================================================================
+# INSTALLATION
+# ============================================================================
+- name: Install containerd
+  include_tasks: installation.yml
+
+# ============================================================================
+# CONFIGURATION
+# ============================================================================
+- name: Configure containerd
+  include_tasks: configuration.yml
+
+# ============================================================================
+# CNI PLUGINS
+# ============================================================================
+- name: Install CNI plugins
+  include_tasks: cni.yml
+
+# ============================================================================
+# SERVICE MANAGEMENT
+# ============================================================================
+- name: Manage containerd service
+  include_tasks: service.yml
+  command: which containerd
+  register: containerd_check
+  changed_when: false
+  failed_when: false
+
+- name: Check if runc is already installed
+  command: which runc
+  register: runc_check
+  changed_when: false
+  failed_when: false
+
+# ============================================================================
+# DEPENDENCIES INSTALLATION
+# ============================================================================
 - name: Install containerd dependencies
   apt:
     name:
       - ca-certificates
       - curl
       - gnupg
+      - lsb-release
       - jq
     state: present
+    update_cache: true
+  when: containerd_check.rc != 0 or runc_check.rc != 0
 
-- name: Install containerd
+# ============================================================================
+# DOCKER REPOSITORY SETUP (for containerd.io package)
+# ============================================================================
+- name: Check if Docker repository is configured
+  stat:
+    path: /etc/apt/sources.list.d/docker.list
+  register: docker_repo_exists
+
+- name: Setup Docker repository for containerd.io package
+  block:
+    - name: Ensure apt keyrings directory exists
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+
+    - name: Download Docker GPG key
+      get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /tmp/docker.gpg
+        mode: '0644'
+
+    - name: Add Docker GPG key to keyring
+      command: gpg --dearmor -o /etc/apt/keyrings/docker.gpg < /tmp/docker.gpg
+      args:
+        creates: /etc/apt/keyrings/docker.gpg
+
+    - name: Clean up temporary Docker GPG key
+      file:
+        path: /tmp/docker.gpg
+        state: absent
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: "deb [arch={{ ansible_architecture }} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        filename: docker
+        state: present
+        update_cache: true
+
+  when: not docker_repo_exists.stat.exists
+
+# ============================================================================
+# CONTAINERD INSTALLATION
+# ============================================================================
+- name: Install containerd.io package
   apt:
     name: containerd.io
     state: present
+    update_cache: false
+  when: containerd_check.rc != 0 or runc_check.rc != 0
 
+- name: Verify containerd installation
+  assert:
+    that:
+      - containerd_check.rc == 0 or (containerd_check.rc != 0 and ansible_check_mode == false)
+    fail_msg: "containerd binary not found after installation"
+    success_msg: "containerd verified"
+  when: not ansible_check_mode
+
+- name: Verify runc installation
+  assert:
+    that:
+      - runc_check.rc == 0 or (runc_check.rc != 0 and ansible_check_mode == false)
+    fail_msg: "runc binary not found after installation"
+    success_msg: "runc verified"
+  when: not ansible_check_mode
+
+# ============================================================================
+# CONTAINERD CONFIGURATION
+# ============================================================================
 - name: Ensure containerd config directory exists
   file:
     path: /etc/containerd
@@ -20,25 +143,125 @@
     group: root
     mode: '0755'
 
-- name: Configure containerd
-  template:
-    src: config.toml.j2
+- name: Stop containerd for configuration update
+  systemd:
+    name: containerd
+    state: stopped
+  when: containerd_check.rc == 0
+  failed_when: false
+
+- name: Generate default containerd configuration
+  command: timeout 10 containerd config default
+  register: containerd_default_config
+  changed_when: true
+  failed_when: false
+  when: use_minimal_config | default(false) == false
+
+- name: Write default containerd configuration
+  copy:
+    content: "{{ containerd_default_config.stdout }}"
     dest: /etc/containerd/config.toml
     owner: root
     group: root
     mode: '0644'
+  when:
+    - use_minimal_config | default(false) == false
+    - containerd_default_config.rc == 0
   notify: Restart containerd
 
-# CIS-compliant containerd config file permissions
-- name: Set containerd config file permissions
-  file:
+- name: Ensure SystemdCgroup is enabled in default config
+  replace:
     path: /etc/containerd/config.toml
+    regexp: 'SystemdCgroup = false'
+    replace: 'SystemdCgroup = true'
+  when:
+    - use_minimal_config | default(false) == false
+    - containerd_default_config.rc == 0
+  notify: Restart containerd
+
+- name: Deploy minimal Kubernetes-ready config
+  template:
+    src: config-minimal.toml.j2
+    dest: /etc/containerd/config.toml
+    owner: root
+    group: root
     mode: '0644'
+  when: use_minimal_config | default(true)
+  notify: Restart containerd
+
+# ============================================================================
+# CONFIGURATION VALIDATION
+# ============================================================================
+- name: Validate containerd configuration
+  command: containerd config dump
+  register: containerd_config_validation
+  changed_when: false
+  failed_when: false
+
+- name: Display configuration validation result
+  debug:
+    msg: "{{ 'Configuration validated successfully' if containerd_config_validation.rc == 0 else 'Configuration validation failed, but continuing' }}"
+  when: containerd_config_validation.rc != 0
+
+# ============================================================================
+# CNI PLUGINS INSTALLATION
+# ============================================================================
+- name: Ensure CNI bin directory exists
+  file:
+    path: /opt/cni/bin
+    state: directory
+    mode: '0755'
     owner: root
     group: root
 
-- name: Enable containerd
+- name: Download CNI plugins
+  get_url:
+    url: "https://github.com/containernetworking/plugins/releases/download/{{ cni_version | default('v1.3.0') }}/cni-plugins-linux-amd64-{{ cni_version | default('v1.3.0') }}.tgz"
+    dest: /tmp/cni-plugins.tgz
+    mode: '0644'
+  register: cni_plugins_download
+  failed_when: false
+
+- name: Extract CNI plugins
+  unarchive:
+    src: /tmp/cni-plugins.tgz
+    dest: /opt/cni/bin
+    remote_src: true
+    creates: /opt/cni/bin/bridge
+  when: cni_plugins_download.rc == 0
+  register: cni_plugins_extracted
+
+- name: Clean up CNI plugins temporary file
+  file:
+    path: /tmp/cni-plugins.tgz
+    state: absent
+  when: cni_plugins_download.rc == 0
+
+# ============================================================================
+# SERVICE MANAGEMENT
+# ============================================================================
+- name: Enable and start containerd service
   systemd:
     name: containerd
     enabled: true
     state: started
+    daemon_reload: true
+
+- name: Wait for containerd socket
+  wait_for:
+    path: /run/containerd/containerd.sock
+    state: present
+    timeout: 30
+  register: containerd_socket_wait
+
+- name: Verify containerd is running
+  systemd:
+    name: containerd
+  register: containerd_status
+
+- name: Fail if containerd is not running
+  assert:
+    that:
+      - containerd_status.status.ActiveState == 'active'
+    fail_msg: "containerd service failed to start"
+    success_msg: "containerd service is running"
