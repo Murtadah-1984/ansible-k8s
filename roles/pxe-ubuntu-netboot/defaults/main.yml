@@ -3,7 +3,16 @@
 
 tftp_root: "/srv/tftp"
 ubuntu_version: "22.04"
-ubuntu_iso_url: "https://releases.ubuntu.com/22.04/ubuntu-22.04.4-live-server-amd64.iso"
+ubuntu_arch: "amd64"
+
+# Use Ubuntu's official netboot server (more reliable than ISO downloads)
+# For Ubuntu 22.04 (Jammy), try multiple path structures
+# Primary: standard images path (most common)
+# Fallback: legacy-images path (for older installers)
+ubuntu_netboot_base_url: "https://archive.ubuntu.com/ubuntu/dists/jammy/main/installer-{{ ubuntu_arch }}/current/images/netboot/ubuntu-installer/{{ ubuntu_arch }}"
+
+# Legacy ISO variables (kept for backward compatibility, but not used)
+ubuntu_iso_url: "https://releases.ubuntu.com/{{ ubuntu_version }}/ubuntu-{{ ubuntu_version }}-live-server-{{ ubuntu_arch }}.iso"
 ubuntu_iso_dest: "/tmp/ubuntu.iso"
 iso_mount_point: "/mnt"
 

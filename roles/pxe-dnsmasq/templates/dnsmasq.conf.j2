@@ -1,15 +1,27 @@
+# PXE Boot Configuration for dnsmasq
+# Only DHCP and TFTP are enabled (DNS disabled to avoid port conflicts)
+
+# Network interface binding
 interface={{ pxe_interface }}
 bind-interfaces
 
+# Disable DNS server (port 53) - only need DHCP and TFTP for PXE
+port=0
+
+# DHCP configuration
 dhcp-range={{ dhcp_range_start }},{{ dhcp_range_end }},{{ dhcp_lease_time }}
 
+# TFTP configuration
 enable-tftp
 tftp-root={{ tftp_root }}
 
+# PXE boot files
 dhcp-boot=pxelinux.0
 
+# UEFI boot support
 dhcp-match=set:efi-x86_64,option:client-arch,7
 dhcp-boot=tag:efi-x86_64,grubx64.efi
 
+# Logging
 log-dhcp
 

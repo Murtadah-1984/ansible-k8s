@@ -1,6 +1,42 @@
 ---
 # Configure dnsmasq for PXE boot
 
+# ============================================================================
+# PREREQUISITE CHECKS
+# ============================================================================
+- name: Ensure TFTP root directory exists
+  file:
+    path: "{{ tftp_root }}"
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Verify network interface exists
+  command: ip link show "{{ pxe_interface }}"
+  register: interface_check
+  changed_when: false
+  failed_when: false
+
+- name: Fail if network interface does not exist
+  fail:
+    msg: "Network interface '{{ pxe_interface }}' does not exist. Available interfaces: {{ ansible_interfaces | join(', ') }}"
+  when: interface_check.rc != 0
+
+- name: Check for port conflicts (DNS port 53)
+  command: netstat -tuln | grep -E ':(53|67)\s' || ss -tuln | grep -E ':(53|67)\s' || true
+  register: port_check
+  changed_when: false
+  failed_when: false
+
+- name: Warn about potential port conflicts
+  debug:
+    msg: "WARNING: Port 53 or 67 may be in use. This could prevent dnsmasq from starting. Check output: {{ port_check.stdout }}"
+  when: port_check.stdout != ""
+
+# ============================================================================
+# CONFIGURATION DEPLOYMENT
+# ============================================================================
 - name: Deploy dnsmasq config
   template:
     src: dnsmasq.conf.j2
@@ -10,9 +46,62 @@
     mode: '0644'
   notify: restart dnsmasq
 
+# ============================================================================
+# CONFIGURATION VALIDATION
+# ============================================================================
+- name: Validate dnsmasq configuration
+  command: dnsmasq --test
+  register: dnsmasq_validate
+  changed_when: false
+  failed_when: false
+
+- name: Display dnsmasq validation result
+  debug:
+    msg: "{{ dnsmasq_validate.stdout_lines }}"
+  when: dnsmasq_validate.stdout_lines is defined
+
+- name: Fail if dnsmasq configuration is invalid
+  fail:
+    msg: "dnsmasq configuration validation failed. Check the configuration file: /etc/dnsmasq.conf"
+  when: dnsmasq_validate.rc != 0
+
+# ============================================================================
+# SERVICE MANAGEMENT
+# ============================================================================
+- name: Stop dnsmasq if running (to apply new config)
+  systemd:
+    name: dnsmasq
+    state: stopped
+  failed_when: false
+
 - name: Ensure dnsmasq running
   systemd:
     name: dnsmasq
     state: started
     enabled: true
+  register: dnsmasq_start
+
+- name: Get dnsmasq service status for debugging
+  command: systemctl status dnsmasq.service --no-pager
+  register: dnsmasq_status
+  changed_when: false
+  failed_when: false
+  when: dnsmasq_start.failed | default(false)
+
+- name: Display dnsmasq service status on failure
+  debug:
+    msg: "{{ dnsmasq_status.stdout_lines }}"
+  when: dnsmasq_start.failed | default(false)
+
+- name: Get dnsmasq journal logs for debugging
+  command: journalctl -u dnsmasq.service -n 50 --no-pager
+  register: dnsmasq_logs
+  changed_when: false
+  failed_when: false
+  when: dnsmasq_start.failed | default(false)
+
+- name: Display dnsmasq logs on failure
+  debug:
+    msg: "{{ dnsmasq_logs.stdout_lines }}"
+  when: dnsmasq_start.failed | default(false)
 

@@ -49,7 +49,7 @@
     - loadbalancer
 
 - name: Kubernetes Node Bootstrap (Bare Metal)
-  hosts: k8s_nodes
+  hosts: all
   become: true
   gather_facts: true
 
