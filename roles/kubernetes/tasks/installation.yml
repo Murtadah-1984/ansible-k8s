@@ -13,29 +13,120 @@
       set_fact:
         is_minor_version: "{{ kubernetes_version is match('^\\d+\\.\\d+$') }}"
 
+    - name: Verify Kubernetes repository file exists
+      stat:
+        path: /etc/apt/sources.list.d/kubernetes.list
+      register: k8s_repo_file
+      changed_when: false
+
+    - name: Display repository file contents
+      debug:
+        msg: "Repository file contents: {{ lookup('file', '/etc/apt/sources.list.d/kubernetes.list') if k8s_repo_file.stat.exists else 'Repository file not found' }}"
+      when: k8s_repo_file.stat.exists
+
+    - name: Update APT cache before checking versions
+      apt:
+        update_cache: true
+        cache_valid_time: 0
+      changed_when: false
+
     - name: Get available versions from repository
       command: apt-cache madison kubeadm
       register: kubeadm_versions
       changed_when: false
+      failed_when: false
+
+    - name: Display raw apt-cache output for debugging
+      debug:
+        msg:
+          - "Raw apt-cache madison output:"
+          - "{{ kubeadm_versions.stdout_lines | default(['No output']) | join('\n') }}"
+      when: kubeadm_versions.stdout_lines is defined
+
+    - name: Extract version numbers from apt-cache output
+      set_fact:
+        available_versions_list: "{{ kubeadm_versions.stdout_lines | select('match', '.*kubeadm.*') | map('regex_replace', '^[^|]*\\|\\s*([^|]+).*', '\\1') | map('trim') | map('regex_replace', '^(\\d+\\.\\d+\\.\\d+).*', '\\1') | unique | list }}"
+      when: kubeadm_versions.stdout_lines is defined and kubeadm_versions.stdout_lines | length > 0
 
     - name: Extract matching version for minor version
       set_fact:
-        available_version: "{{ (kubeadm_versions.stdout_lines | select('match', '.*' + kubernetes_version + '\\.') | map('regex_replace', '.*\\s+(\\S+).*', '\\1') | list | first) | default('') }}"
+        available_version_raw: "{{ (kubeadm_versions.stdout_lines | select('match', '.*' + kubernetes_version + '\\.') | map('regex_replace', '^[^|]*\\|\\s*([^|]+).*', '\\1') | map('trim') | list | first) | default('') }}"
       when: is_minor_version | bool
 
     - name: Extract exact matching version for full version
       set_fact:
-        available_version: "{{ (kubeadm_versions.stdout_lines | select('match', '.*' + kubernetes_version) | map('regex_replace', '.*\\s+(\\S+).*', '\\1') | list | first) | default('') }}"
+        available_version_raw: "{{ (kubeadm_versions.stdout_lines | select('match', '.*' + kubernetes_version) | map('regex_replace', '^[^|]*\\|\\s*([^|]+).*', '\\1') | map('trim') | list | first) | default('') }}"
       when: not (is_minor_version | bool)
+
+    - name: Set available_version (validate it starts with digit)
+      set_fact:
+        available_version: "{{ available_version_raw if (available_version_raw is defined and available_version_raw != '' and available_version_raw is match('^\\d+')) else '' }}"
+
+    - name: Try alternative method to check repository packages
+      command: apt-cache policy kubeadm
+      register: kubeadm_policy
+      changed_when: false
+      failed_when: false
+      when: (available_version == '' or available_version is not defined) and (kubeadm_versions.stdout_lines | default([]) | length == 0)
+
+    - name: Display apt-cache policy output
+      debug:
+        msg:
+          - "apt-cache policy output:"
+          - "{{ kubeadm_policy.stdout_lines | default(['No output']) | join('\n') }}"
+      when: 
+        - (available_version == '' or available_version is not defined)
+        - kubeadm_policy is defined
+        - kubeadm_policy.stdout_lines is defined
+
+    - name: Extract versions from policy output as fallback
+      set_fact:
+        available_versions_list: "{{ (kubeadm_policy.stdout_lines | select('match', '.*\\d+\\.\\d+\\.\\d+.*') | map('regex_replace', '.*(\\d+\\.\\d+\\.\\d+).*', '\\1') | unique | list) | default([]) }}"
+      when: 
+        - (available_version == '' or available_version is not defined)
+        - kubeadm_policy is defined
+        - kubeadm_policy.stdout_lines is defined
+        - (available_versions_list is not defined or available_versions_list | length == 0)
+
+    - name: Display available versions for debugging
+      debug:
+        msg:
+          - "Requested Kubernetes version: {{ kubernetes_version }}"
+          - "Repository file exists: {{ k8s_repo_file.stat.exists | default(false) }}"
+          - "Available versions in repository: {{ available_versions_list[:10] | join(', ') if available_versions_list is defined and available_versions_list | length > 0 else 'None found (repository may not be configured correctly)' }}"
+          - "Raw apt-cache madison had {{ kubeadm_versions.stdout_lines | default([]) | length }} lines"
+      when: available_version == '' or available_version is not defined
 
     - name: Fail if version not found
       fail:
-        msg: "Kubernetes version {{ kubernetes_version }} not found in repository. Available versions: {{ kubeadm_versions.stdout_lines[:5] | join(', ') }}"
+        msg: |
+          Kubernetes version {{ kubernetes_version }} not found in repository.
+          
+          Diagnostic information:
+          - Repository file exists: {{ k8s_repo_file.stat.exists | default(false) }}
+          - Repository URL: https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/deb/
+          - Available versions: {{ available_versions_list[:10] | join(', ') if available_versions_list is defined and available_versions_list | length > 0 else 'None found - repository may not be configured correctly' }}
+          - apt-cache madison returned {{ kubeadm_versions.stdout_lines | default([]) | length }} lines
+          
+          Troubleshooting steps:
+          1. Verify the repository URL is accessible: curl -I https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/deb/
+          2. Check if the repository file exists: cat /etc/apt/sources.list.d/kubernetes.list
+          3. Try updating the cache manually: apt-get update
+          4. Check if packages are available: apt-cache policy kubeadm
+          
+          If version 1.35 exists, the repository may need to be configured differently.
+          Please check https://pkgs.k8s.io for the correct repository URL format.
       when: available_version == '' or available_version is not defined
 
     - name: Store pure version for image preloading
       set_fact:
         k8s_pure_version: "{{ available_version | regex_replace('^(\\d+\\.\\d+\\.\\d+).*', '\\1') }}"
+
+- name: Unhold Kubernetes packages before installation/upgrade
+  command: apt-mark unhold kubelet kubeadm kubectl
+  changed_when: false
+  failed_when: false
+  when: available_version is defined and available_version != ''
 
 - name: Install Kubernetes components with detected version
   apt:
@@ -47,8 +138,9 @@
     update_cache: false
   when: available_version is defined and available_version != ''
 
-- name: Hold Kubernetes packages
+- name: Hold Kubernetes packages after installation
   command: apt-mark hold kubelet kubeadm kubectl
   changed_when: false
   failed_when: false
+  when: available_version is defined and available_version != ''
 

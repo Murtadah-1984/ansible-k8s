@@ -21,18 +21,28 @@
   register: cni_plugins_download
   failed_when: false
 
+- name: Verify CNI plugins download succeeded
+  stat:
+    path: /tmp/cni-plugins.tgz
+  register: cni_plugins_file
+  changed_when: false
+
 - name: Extract CNI plugins
   unarchive:
     src: /tmp/cni-plugins.tgz
     dest: /opt/cni/bin
     remote_src: true
     creates: /opt/cni/bin/bridge
-  when: cni_plugins_download.rc == 0
+  when: 
+    - not cni_plugins_download.failed | default(false)
+    - cni_plugins_file.stat.exists | default(false)
   register: cni_plugins_extracted
 
 - name: Clean up CNI plugins temporary file
   file:
     path: /tmp/cni-plugins.tgz
     state: absent
-  when: cni_plugins_download.rc == 0
+  when: 
+    - not cni_plugins_download.failed | default(false)
+    - cni_plugins_file.stat.exists | default(false)
 

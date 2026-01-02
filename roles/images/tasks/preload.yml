@@ -14,7 +14,8 @@
   register: image_pull_results
   retries: 3
   delay: 5
-  until: image_pull_results.results | selectattr('item', 'equalto', item) | selectattr('rc', 'equalto', 0) | list | length > 0
+  failed_when: false
+  changed_when: true
 
 - name: Check for failed image pulls
   set_fact:

@@ -68,6 +68,13 @@
   hosts: all
   become: true
   gather_facts: true
+  vars:
+    # WARNING: This will destroy all Kubernetes cluster state!
+    # Set perform_reset: true to proceed with cluster reset
+    perform_reset: true  # Change to true to enable reset
+    remove_kubeconfig: true  # Set to true to also remove ~/.kube directories
+    cleanup_containers: true  # Set to true to remove all containers
+    cleanup_images: true  # Set to true to remove all images
 
   roles:
     - reset-kubernetes

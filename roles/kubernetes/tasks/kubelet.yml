@@ -34,7 +34,7 @@
     owner: root
     group: root
     mode: '0600'
-  notify: restart kubelet
+  notify: Restart kubelet
 
 # CIS 4.1.9 & 4.1.10 - Ensure kubelet config.yaml permissions and ownership
 # Note: Permissions and ownership are already set in the template task above

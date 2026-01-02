@@ -10,12 +10,19 @@
   changed_when: false
   failed_when: false
 
+- name: Backup /etc/fstab before modification
+  copy:
+    src: /etc/fstab
+    dest: /etc/fstab.backup
+    remote_src: true
+  failed_when: false
+  changed_when: false
+
 - name: Comment out swap entries in /etc/fstab
   replace:
     path: /etc/fstab
     regexp: '^([^#].*swap.*)$'
     replace: '# \1'
-  backup: true
   failed_when: false
 
 - name: Ensure swap.target.d override directory exists

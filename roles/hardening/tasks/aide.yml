@@ -30,24 +30,54 @@
     line: 'SILENTREPORTS=no'
     create: true
 
-- name: Initialize AIDE database if not exists (UBTU-24-100110)
-  command: aideinit
-  args:
-    creates: /var/lib/aide/aide.db
-  changed_when: false
-  failed_when: false
-
-- name: Check if AIDE database exists
+- name: Check if AIDE database already exists
   stat:
     path: /var/lib/aide/aide.db
-  register: aide_db_exists
+  register: aide_db_check
   changed_when: false
 
-- name: Check if new AIDE database exists
+- name: Display AIDE initialization warning
+  debug:
+    msg:
+      - "======================================================"
+      - "⚠️  AIDE Database Initialization"
+      - "======================================================"
+      - "WARNING: AIDE database initialization can take 30-60+ minutes"
+      - "         on large filesystems. This process will run asynchronously."
+      - ""
+      - "You can monitor progress with:"
+      - "  tail -f /var/log/aide/aide.log"
+      - "  ps aux | grep aideinit"
+      - ""
+      - "The playbook will poll every 30 seconds for completion."
+      - "Maximum wait time: 2 hours"
+      - "======================================================"
+  when: not aide_db_check.stat.exists | default(false)
+
+- name: Initialize AIDE database if not exists (UBTU-24-100110)
+  command: aideinit
+  async: 7200  # 2 hours timeout (in seconds)
+  poll: 30     # Poll every 30 seconds
+  register: aide_init_result
+  when: not aide_db_check.stat.exists | default(false)
+  failed_when: false
+  changed_when: true
+
+- name: Display AIDE initialization completion status
+  debug:
+    msg:
+      - "{{ '✅ AIDE initialization completed successfully' if (aide_init_result.finished | default(false)) else '⏳ AIDE initialization is still running (this is normal for large filesystems)' }}"
+      - "Job ID: {{ aide_init_result.ansible_job_id | default('N/A') }}"
+  when:
+    - not aide_db_check.stat.exists | default(false)
+    - aide_init_result is defined
+
+- name: Check if new AIDE database exists after initialization
   stat:
     path: /var/lib/aide/aide.db.new
   register: aide_db_new_exists
   changed_when: false
+  when: not aide_db_check.stat.exists | default(false)
 
 - name: Copy AIDE database if new one exists (UBTU-24-100110)
   copy:
@@ -58,6 +88,6 @@
     group: root
     mode: '0600'
   when: 
-    - not aide_db_exists.stat.exists | default(false)
+    - not aide_db_check.stat.exists | default(false)
     - aide_db_new_exists.stat.exists | default(false)
 

@@ -1,0 +1,16 @@
+- name: Disable ufw
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Disable ufw
+      ufw:
+        state: disabled
+        immediate: true
+        logging: on
+        logging-level: debug
+        logging-facility: daemon
+        logging-tag: ufw
+        logging-syslog-facility: daemon
+        logging-syslog-tag: ufw
